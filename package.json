@@ -1,0 +1,36 @@
+{
+  "name": "meshingly-mcp",
+  "version": "0.1.0",
+  "description": "End-to-end encrypted relay that lets AI coding sessions on different machines message each other.",
+  "mcpName": "com.meshingly/meshingly",
+  "type": "module",
+  "bin": {
+    "meshingly-mcp": "dist/server.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=22.18"
+  },
+  "license": "MIT",
+  "author": "Burak Uysal",
+  "homepage": "https://meshingly.com",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/DrBurakUysal/meshingly-mcp.git"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "ai-agents",
+    "claude-code",
+    "codex",
+    "opencode",
+    "encryption",
+    "collaboration"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}

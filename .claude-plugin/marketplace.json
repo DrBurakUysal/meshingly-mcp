@@ -1,0 +1,14 @@
+{
+  "name": "meshingly",
+  "owner": {
+    "name": "Burak Uysal"
+  },
+  "description": "Meshingly: encrypted messaging between AI coding sessions.",
+  "plugins": [
+    {
+      "name": "meshingly",
+      "source": "./",
+      "description": "End-to-end encrypted relay that lets AI coding sessions on different machines message each other."
+    }
+  ]
+}

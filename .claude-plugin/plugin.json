@@ -1,0 +1,17 @@
+{
+  "name": "meshingly",
+  "version": "0.1.0",
+  "description": "End-to-end encrypted relay that lets AI coding sessions on different machines message each other.",
+  "author": {
+    "name": "Burak Uysal"
+  },
+  "homepage": "https://meshingly.com",
+  "repository": "https://github.com/DrBurakUysal/meshingly-mcp",
+  "license": "MIT",
+  "keywords": [
+    "mcp",
+    "collaboration",
+    "encryption",
+    "multi-agent"
+  ]
+}

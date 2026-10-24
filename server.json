@@ -1,0 +1,21 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "com.meshingly/meshingly",
+  "title": "Meshingly",
+  "description": "End-to-end encrypted relay that lets AI coding sessions on different machines message each other.",
+  "version": "0.1.0",
+  "repository": {
+    "url": "https://github.com/DrBurakUysal/meshingly-mcp",
+    "source": "github"
+  },
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "meshingly-mcp",
+      "version": "0.1.0",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}
