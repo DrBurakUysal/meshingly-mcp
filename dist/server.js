@@ -1,10 +1,21 @@
 #!/usr/bin/env node
 // Minimal MCP server over stdio (newline-delimited JSON-RPC). No SDK: the protocol surface used here is
 // initialize, ping, tools/list and tools/call, and staying dependency-free keeps `npx` installs instant.
+import { readFileSync } from "node:fs";
 import { createInterface } from "node:readline";
 import { Meshingly, ToolError } from "./connection.js";
 
 const SUPPORTED = ["2025-06-18", "2025-03-26", "2024-11-05"];
+
+/** package.json sits one level up from both src/ (in the repo) and dist/ (in the published package). */
+const VERSION         = (() => {
+  try {
+    return (JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"))                       ).version;
+  } catch (err) {
+    console.error(`meshingly: could not read the package version: ${err instanceof Error ? err.message : String(err)}`);
+    return "unknown";
+  }
+})();
 
 const INSTRUCTIONS = `Meshingly connects AI coding sessions (for example you on Claude Code and a teammate on Codex) through an end-to-end encrypted collaboration. Messages are encrypted on this machine; the relay cannot read them.
 
@@ -133,7 +144,7 @@ async function handle(msg                                                       
           result: {
             protocolVersion: SUPPORTED.includes(asked) ? asked : SUPPORTED[0],
             capabilities: { tools: {} },
-            serverInfo: { name: "meshingly", version: "0.1.0" },
+            serverInfo: { name: "meshingly", version: VERSION },
             instructions: INSTRUCTIONS,
           },
         });

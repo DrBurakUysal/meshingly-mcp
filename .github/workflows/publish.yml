@@ -1,0 +1,115 @@
+name: Publish
+
+# Runs when a version tag is pushed (the source repository's release workflow does that), or by hand to retry.
+# npm uses trusted publishing: no npm token is stored, GitHub proves which workflow is publishing.
+# The MCP Registry login uses the domain key kept in the MCP_PRIVATE_KEY secret.
+run-name: Publish ${{ inputs.tag || github.ref_name }}
+
+on:
+  push:
+    tags: ["v*"]
+  # A retry runs this file as it is on the branch and publishes the content of `tag`.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to publish, vX.Y.Z (default: the ref the run was started on, which must be a tag)"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+# One group per tag: GitHub keeps a single queued run per group and drops the older ones, so different tags (a new release
+# and the retry of an earlier one) must not share a group. Runs of the same tag still queue behind each other.
+concurrency:
+  group: publish-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 24
+
+      # Trusted publishing needs npm 11.5.1 or newer. Pinned: this job can mint npm publishing credentials, so it
+      # should not pick up whatever npm release is newest (11.6.2 is what Node 24 ships).
+      - name: Use a pinned npm
+        run: npm install -g npm@11.6.2
+
+      - name: Check that the tag, package.json and server.json agree
+        id: v
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          SERVER=$(node -p "require('./server.json').version")
+          PACKAGE=$(node -p "require('./server.json').packages[0].version")
+          if [ "$VERSION" != "$SERVER" ] || [ "$VERSION" != "$PACKAGE" ]; then
+            echo "::error::package.json ($VERSION), server.json ($SERVER) and its package entry ($PACKAGE) disagree"; exit 1
+          fi
+          TAG="${INPUT_TAG:-$GITHUB_REF_NAME}"
+          if [ -n "$INPUT_TAG" ] || [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            if [ "v$VERSION" != "$TAG" ]; then echo "::error::tag $TAG does not match version $VERSION"; exit 1; fi
+          else
+            echo "::error::start this workflow on a tag, or give the tag as input"; exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Publish to npm
+        run: |
+          PACKAGE=$(node -p "require('./package.json').name")
+          # "Already published" needs the version in the answer. Not found (E404), or an empty answer, means not published
+          # yet. Any other failure (network, registry) must stop here, not publish.
+          # stdout and stderr are kept apart: a warning npm prints on stderr must not look like an answer.
+          STATUS=0
+          CHECK=$(npm view "$PACKAGE@${{ steps.v.outputs.version }}" version 2>"$RUNNER_TEMP/npm-view.err") || STATUS=$?
+          if [ "$STATUS" -eq 0 ] && [ "$CHECK" = "${{ steps.v.outputs.version }}" ]; then
+            echo "$PACKAGE@${{ steps.v.outputs.version }} is already on npm, skipping"
+          elif [ "$STATUS" -eq 0 ] || grep -q E404 "$RUNNER_TEMP/npm-view.err"; then
+            npm publish --access public
+          else
+            echo "::error::could not check whether $PACKAGE@${{ steps.v.outputs.version }} is on npm: $(cat "$RUNNER_TEMP/npm-view.err")"; exit 1
+          fi
+
+      - name: Install mcp-publisher (pinned, checksum verified)
+        run: |
+          TAG=v1.8.4
+          BASE="https://github.com/modelcontextprotocol/registry/releases/download/${TAG}"
+          curl -fsSL -O "${BASE}/mcp-publisher_linux_amd64.tar.gz" -O "${BASE}/registry_${TAG#v}_checksums.txt"
+          grep " mcp-publisher_linux_amd64.tar.gz\$" "registry_${TAG#v}_checksums.txt" | sha256sum -c -
+          tar xzf mcp-publisher_linux_amd64.tar.gz mcp-publisher
+
+      - name: Publish to the MCP Registry
+        env:
+          MCP_PRIVATE_KEY: ${{ secrets.MCP_PRIVATE_KEY }}
+        run: |
+          # Re-runs must not fail on a version the registry already has (publishing is not repeatable).
+          NAME=$(node -p "encodeURIComponent(require('./server.json').name)")
+          VERSION=$(node -p "require('./server.json').version")
+          CODE=$(curl -sS -o /dev/null -w '%{http_code}' "https://registry.modelcontextprotocol.io/v0/servers/$NAME/versions/$VERSION") || CODE=000
+          case "$CODE" in
+            200) echo "version $VERSION is already in the MCP Registry, skipping"; exit 0 ;;
+            404) ;;
+            *) echo "::error::could not check the MCP Registry (answered $CODE)"; exit 1 ;;
+          esac
+          # com.meshingly/meshingly is authenticated through the domain meshingly.com
+          DOMAIN=$(node -p "require('./server.json').name.split('/')[0].split('.').reverse().join('.')")
+          # The CLI takes the key only as a flag (no env var or stdin), so it is in this process's arguments. The runner is
+          # a single-use GitHub-hosted machine and the value is masked in logs; the io.github.* namespaces would avoid a
+          # stored key altogether (github-oidc), at the price of a different registry name.
+          ./mcp-publisher login http --domain "$DOMAIN" --private-key "$MCP_PRIVATE_KEY"
+          # The registry checks the npm package exists; right after publishing it can take a moment to show up.
+          for attempt in 1 2 3 4; do
+            if ./mcp-publisher publish; then exit 0; fi
+            echo "publish attempt $attempt failed, waiting before trying again"
+            sleep 20
+          done
+          exit 1
