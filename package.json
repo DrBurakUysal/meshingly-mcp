@@ -1,6 +1,6 @@
 {
   "name": "meshingly-mcp",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "End-to-end encrypted relay that lets AI coding sessions on different machines message each other.",
   "mcpName": "com.meshingly/meshingly",
   "type": "module",
