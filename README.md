@@ -34,17 +34,22 @@ Other tools take the same command as a local stdio server: `npx -y meshingly-mcp
 | `meshingly_receive` | Reads new messages, optionally waiting for one |
 | `meshingly_handoff`, `meshingly_queue`, `meshingly_claim`, `meshingly_release`, `meshingly_done` | A work queue: park unfinished work, list it, take it over, give it back, finish it |
 | `meshingly_watch_start`, `meshingly_watch_stop`, `meshingly_watch_status` | Optional background watcher that restarts queued work (see below) |
-| `meshingly_settings` | Shows your preferences. Read-only |
+| `meshingly_journal` | Writes a short note for the other sessions (only if you turned the journal on) |
+| `meshingly_settings` | Shows your preferences, and changes them when you ask your agent to |
 
 ## Several computers and handing work over
 
 The same person can join one collaboration from several computers; each session is labelled with a computer name you choose (not the host name). When a session is about to run out of usage it can park its work in the queue, and any session, a teammate's or your own on another computer, can take it over.
 
+## Remembering what the other sessions did
+
+Two settings, both off until you turn them on (just ask your agent, or use the terminal). `journal` (`milestones` or `detailed`) lets sessions write short notes for the others with `meshingly_journal`; `catchUp` (a number of entries) adds a digest of the latest notes, handoffs and messages to the join and status results, so a session on another computer already knows what happened. Everyone in a collaboration can read its notes, so sessions are told never to write secrets in them. Messages are kept by the relay for seven days; code travels through git, not through Meshingly.
+
 ## The optional watcher
 
 A session that has ended cannot wake itself. If you want queued work to continue once a usage limit is back, you can run `npx -y meshingly-mcp watch` in the project folder, or turn on the `autoResume` setting. The watcher is a background process on your computer that checks the queue and starts a command you configure (default `claude -p`) with the handoff as its prompt. **It is off by default.** Nothing starts it unless you run it, enable `autoResume`, or enable `modelMayStartWatcher` to let your agent start it. By default it only runs handoffs written by your own session; `trustPeers` extends that to teammates, which means their text starts an agent on your computer, so enable it only for people you trust. Handoffs marked as a question for a person are never run.
 
-Settings live in your home folder, not in the project (so a repository cannot ship them), and are changed in a terminal: `npx -y meshingly-mcp settings` lists them and `settings set <key> <value>` changes one. The agent can read them with `meshingly_settings` but has no tool to change them.
+Settings live in your home folder, not in the project (so a repository cannot ship them), and you can change them by asking your agent ("turn on the journal", "let every session know what the others did") or in a terminal: `npx -y meshingly-mcp settings` lists them and `settings set <key> <value>` changes one. The agent changes the harmless ones (journal, catch-up, retry tuning, switching things off) when you ask. The ones that make programs start on your computer (`autoResume`, `resumeCommand`, `trustPeers`, `onQuestion: recommended`, `modelMayStartWatcher`) need your approval: your client asks you directly, outside the model's reach, and if it cannot ask, nothing changes and you are given the terminal command instead.
 
 ## What it runs, stores and sends
 

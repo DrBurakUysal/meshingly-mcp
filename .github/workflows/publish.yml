@@ -106,10 +106,11 @@ jobs:
           # a single-use GitHub-hosted machine and the value is masked in logs; the io.github.* namespaces would avoid a
           # stored key altogether (github-oidc), at the price of a different registry name.
           ./mcp-publisher login http --domain "$DOMAIN" --private-key "$MCP_PRIVATE_KEY"
-          # The registry checks the npm package exists; right after publishing it can take a moment to show up.
-          for attempt in 1 2 3 4; do
+          # The registry checks the npm package exists; right after publishing it can take minutes to show up (the first release of 0.2.0
+          # failed all four 20 s attempts and passed a few minutes later), so it is retried for about four minutes.
+          for attempt in 1 2 3 4 5 6 7 8; do
             if ./mcp-publisher publish; then exit 0; fi
             echo "publish attempt $attempt failed, waiting before trying again"
-            sleep 20
+            sleep 30
           done
           exit 1

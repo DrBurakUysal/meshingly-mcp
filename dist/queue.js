@@ -6,9 +6,16 @@ const CLOCK_SKEW_MS = 5 * 60 * 1000;
 /** The relay keeps messages for seven days, so a "limit is back" time further out than that is not believable. */
 const MAX_RESET_AHEAD_MS = 7 * 24 * 3600 * 1000;
 
+/** The first `max` UTF-16 units of `text`, never ending in half of an emoji (a lone surrogate is not valid text). */
+export function cut(text        , max        )         {
+  const part = text.slice(0, max);
+  const last = part.charCodeAt(part.length - 1);
+  return last >= 0xd800 && last <= 0xdbff ? part.slice(0, -1) : part;
+}
+
 /** One line of plain text: peers write titles and names, and a newline in one could pose as a new instruction. */
 export function clean(text        , max        )         {
-  return text.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, " ").trim().slice(0, max);
+  return cut(text.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, " ").trim(), max);
 }
 
                           

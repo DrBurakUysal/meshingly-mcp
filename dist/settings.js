@@ -21,6 +21,10 @@ import { dirname, join, resolve } from "node:path";
                       
                                                                                    
                                      
+                                                                                                          
+                                             
+                                                                                                                    
+                  
                                                                                          
                                 
                                                                                                                                          
@@ -58,6 +62,17 @@ export const SETTING_INFO                                                       
     description:
       "When an unattended run would ask a question: stop = park the question for a person; recommended = take the option it recommends, note the assumption and carry on (never for deleting, spending, publishing or pushing).",
   },
+  journal: {
+    kind: { type: "enum", values: ["off", "milestones", "detailed"] },
+    default: "off",
+    description:
+      "Sessions write short notes for the other sessions (milestones: finished steps and decisions; detailed: every step). Everyone in the collaboration can read them.",
+  },
+  catchUp: {
+    kind: { type: "int", min: 0, max: 200 },
+    default: 0,
+    description: "How many recent entries (notes, handoffs, messages) a session reads when it joins or starts, so it knows what the other sessions did. 0 = none.",
+  },
   modelMayStartWatcher: {
     kind: { type: "boolean" },
     default: false,
@@ -73,6 +88,42 @@ export const SETTING_INFO                                                       
 };
 
 export const SETTING_KEYS = Object.keys(SETTING_INFO)                         ;
+
+/**
+ * Settings an AI session may change itself when the user asks for it in the conversation. They decide what is shared inside
+ * the collaboration or how patient the watcher is; none of them starts a program.
+ */
+export const MODEL_MAY_SET                              = new Set(["journal", "catchUp", "settleMinutes", "maxAttempts", "checkIntervalSeconds"]);
+
+/**
+ * Whether a change needs the user's own approval, which the model cannot give. Everything does, except what is on the
+ * allow-list above and switching a supervision-reducing setting back off: a setting added later is guarded until someone
+ * deliberately puts it on the list.
+ */
+export function needsApproval(key                , value         )          {
+  if (MODEL_MAY_SET.has(key)) return false;
+  if ((key === "autoResume" || key === "trustPeers" || key === "modelMayStartWatcher") && value === false) return false;
+  if (key === "onQuestion" && value === "stop") return false;
+  return true;
+}
+
+/** What a change means, in the words the user sees when asked to approve it. */
+export function riskNote(key                , value         )         {
+  switch (key) {
+    case "autoResume":
+      return "a background process will start an AI agent on this computer whenever queued work is ready";
+    case "resumeCommand":
+      return `this command will be run unattended, with queued work as its input: ${String(value)}`;
+    case "trustPeers":
+      return "handoffs written by teammates will start an AI agent on this computer";
+    case "onQuestion":
+      return "unattended runs will decide questions themselves instead of waiting for you (never deleting, spending, publishing or pushing)";
+    case "modelMayStartWatcher":
+      return "an AI session may start the background watcher without asking you again";
+    default:
+      return "this changes how Meshingly runs on this computer";
+  }
+}
 
 /** Where this project's settings are kept: under the user's home (MESHINGLY_HOME overrides it, for tests), keyed by the project's path. */
 export function settingsPath(root        )         {
@@ -104,7 +155,8 @@ export function parseSetting(key                , raw         )                 
     case "enum":
       return typeof text === "string" && kind.values.includes(text) ? { ok: true, value: text } : { ok: false, reason: `use one of: ${kind.values.join(", ")}` };
     case "int": {
-      const n = typeof text === "number" ? text : Number(text);
+      // Not Number(): it turns "", true and [3] into numbers, and a malformed value must never become a valid setting.
+      const n = typeof text === "number" ? text : typeof text === "string" && /^-?\d+$/.test(text) ? Number(text) : Number.NaN;
       return Number.isInteger(n) && n >= kind.min && n <= kind.max ? { ok: true, value: n } : { ok: false, reason: `use a whole number from ${kind.min} to ${kind.max}` };
     }
     case "string":
@@ -157,17 +209,26 @@ export function resolveSettings(root        , env                    = process.e
 
 /** Writes one setting to the project's settings file. Throws an Error whose message says what is wrong. */
 export function writeSetting(root        , key        , raw        )           {
-  if (!SETTING_KEYS.includes(key                  )) throw new Error(`Unknown setting "${key}". Settings: ${SETTING_KEYS.join(", ")}.`);
-  const k = key                  ;
-  const parsed = parseSetting(k, raw);
-  if (!parsed.ok) throw new Error(`${k}: ${parsed.reason}.`);
+  return writeSettings(root, { [key]: raw });
+}
+
+/** Writes several settings in one go: all are checked first, then saved with a single rename, so a failure leaves none of them half applied. */
+export function writeSettings(root        , entries                        )           {
+  const checked                                                    = [];
+  for (const [key, raw] of Object.entries(entries)) {
+    if (!SETTING_KEYS.includes(key                  )) throw new Error(`Unknown setting "${key}". Settings: ${SETTING_KEYS.join(", ")}.`);
+    const k = key                  ;
+    const parsed = parseSetting(k, raw);
+    if (!parsed.ok) throw new Error(`${k}: ${parsed.reason}.`);
+    checked.push([k, parsed.value]);
+  }
   let stored                          = {};
   try {
     if (existsSync(file(root))) stored = JSON.parse(readFileSync(file(root), "utf8"))                           ;
   } catch {
     stored = {}; // a broken file is replaced, not extended
   }
-  stored[k] = parsed.value;
+  for (const [k, value] of checked) stored[k] = value;
   mkdirSync(dirname(file(root)), { recursive: true });
   const tmp = `${file(root)}.tmp`;
   writeFileSync(tmp, JSON.stringify(stored, null, 2), { mode: 0o600 });
@@ -185,6 +246,16 @@ export function describeSettings(root        , env                    = process.
   lines.push("", `File: ${settingsPath(root)}`);
   if (problem) lines.push(`Note: ${problem}.`);
   return lines.join("\n");
+}
+
+/** What a session is told about the journal. Empty when it is off. */
+export function journalPolicy(level                     )         {
+  if (level === "off") return "";
+  const when =
+    level === "detailed"
+      ? "after each step you take (what you changed, which files, what you decided and why, what comes next)"
+      : "after each milestone you finish (a feature done, a bug found or fixed, a decision made, what comes next)";
+  return `The user turned the journal on (${level}): ${when}, call meshingly_journal with one to three sentences. The other sessions in this collaboration, including your own later ones on other computers, read these notes to know what happened here, and everyone in the collaboration can read them. Never put secrets in a note.`;
 }
 
 /** Appended to the prompt of an unattended run. */
