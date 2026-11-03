@@ -35,6 +35,10 @@ export function parsePayload(json        )                {
   ) {
     throw new Error("Invalid or unsigned payload");
   }
+  // meta is read as strings everywhere (titles, ids, names): a peer that sends anything else must not be able to break the readers.
+  if (data.meta !== undefined && (typeof data.meta !== "object" || data.meta === null || Array.isArray(data.meta) || Object.values(data.meta).some((v) => typeof v !== "string"))) {
+    throw new Error("Invalid message metadata");
+  }
   return { type: data.type, body: data.body, meta: data.meta, sentAt: data.sentAt, pub: data.pub, sig: data.sig };
 }
 

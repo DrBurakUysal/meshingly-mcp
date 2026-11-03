@@ -8,6 +8,8 @@ import { parsePayload, signingInput,                                } from "./pr
               
              
                           
+                                                                      
+                    
                    
                                                                             
                     
@@ -43,10 +45,12 @@ export class Messenger {
   async hello()                                       {
     const name = this.session.name ?? this.session.role;
     const tool = this.session.tool ?? "unknown";
-    return this.send("hello", `${name} (${tool}, ${this.session.role}) joined`, {
+    const device = this.session.device;
+    return this.send("hello", `${name} (${tool}, ${this.session.role}${device ? `, ${device}` : ""}) joined`, {
       name,
       tool,
       role: this.session.role,
+      ...(device ? { device } : {}),
     });
   }
 
@@ -71,8 +75,9 @@ export class Messenger {
     after        ,
     onSkip                                             = () => {},
     waitSeconds = 0,
+    includeOwn = false,
   )                                                               {
-    const res = await this.client.poll({ after, excludeSession: this.session.sessionId, waitSeconds });
+    const res = await this.client.poll({ after, excludeSession: includeOwn ? undefined : this.session.sessionId, waitSeconds });
     const messages                    = [];
     for (const wire of res.messages) {
       try {
@@ -85,6 +90,7 @@ export class Messenger {
           seq: wire.seq,
           id: wire.id,
           senderSessionId: wire.senderSessionId,
+          createdAt: wire.createdAt,
           payload,
           sender: this.session.peerInfo[wire.senderSessionId],
         });
@@ -98,6 +104,11 @@ export class Messenger {
   /** Verifies the signature and pins the sender's key on first sight; a different key for a known session is a forgery. */
           authenticateSender(senderSessionId        , pub        , input        , sig        )       {
     if (!verifyMessage(pub, input, sig)) throw new Error("Invalid sender signature");
+    // Session ids travel in the clear, so any member could write one that is not theirs. Our own id is ours alone:
+    // text claiming it must be signed with our key, or "own handoffs only" would mean "handoffs that name my id".
+    if (senderSessionId === this.session.sessionId && pub !== this.session.signingKeys.publicKey) {
+      throw new Error("Message uses this session's id but is signed with another key (impersonation)");
+    }
     const pinned = this.session.peers[senderSessionId];
     if (pinned === undefined) {
       this.session.peers[senderSessionId] = pub;
@@ -112,6 +123,7 @@ export class Messenger {
       name: meta.name.slice(0, 40),
       tool: (meta.tool ?? "unknown").slice(0, 40),
       role: (meta.role ?? "").slice(0, 40),
+      ...(meta.device ? { device: meta.device.slice(0, 40) } : {}),
     };
   }
 }
