@@ -263,7 +263,7 @@ export function journalPolicy(level                     )         {
     level === "detailed"
       ? "after each step you take (what you changed, which files, what you decided and why, what comes next)"
       : "after each milestone you finish (a feature done, a bug found or fixed, a decision made, what comes next)";
-  return `The user turned the journal on (${level}): ${when}, call meshingly_journal with one to three sentences. The other sessions in this collaboration, including your own later ones on other computers, read these notes to know what happened here, and everyone in the collaboration can read them. Never put secrets in a note.`;
+  return `The user turned the journal on (${level}): ${when}, call meshingly_journal with one to three sentences. The other sessions in this collaboration, including your own later ones on other computers, read these notes to know what happened here, and everyone in the collaboration can read them. Never put secrets in a note. Give each note a short topic, the files you touched (files), and decision=true when it records a decision: the map of the collaboration is built from them, so later sessions read a short map instead of the whole record.`;
 }
 
 /** Appended to the prompt of an unattended run. */

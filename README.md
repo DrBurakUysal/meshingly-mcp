@@ -35,6 +35,7 @@ Other tools take the same command as a local stdio server: `npx -y meshingly-mcp
 | `meshingly_handoff`, `meshingly_queue`, `meshingly_claim`, `meshingly_release`, `meshingly_done` | A work queue: park unfinished work, list it, take it over, give it back, finish it |
 | `meshingly_watch_start`, `meshingly_watch_stop`, `meshingly_watch_status` | Optional background watcher that restarts queued work (see below) |
 | `meshingly_journal` | Writes a short note for the other sessions (only if you turned the journal on) |
+| `meshingly_recall` | Looks up details of what happened (by peer, topic, file or words), so sessions read a short map instead of everything |
 | `meshingly_settings` | Shows your preferences, and changes them when you ask your agent to |
 | (status notice) | `meshingly_status` tells you once per session when a newer version of the MCP exists |
 

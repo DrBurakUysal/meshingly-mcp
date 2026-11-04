@@ -39,7 +39,7 @@ export function clean(text        , max        )         {
  
 
 /** Time of a message by the relay's clock, which all participants share; the sender's clock only when the relay's is missing. */
-const at = (m                 )         => (typeof m.createdAt === "number" ? m.createdAt : Date.parse(m.payload.sentAt));
+export const at = (m                 )         => (typeof m.createdAt === "number" ? m.createdAt : Date.parse(m.payload.sentAt));
 
 /**
  * Derives the queue from the collaboration's message history, so nothing is stored on the relay beyond the
