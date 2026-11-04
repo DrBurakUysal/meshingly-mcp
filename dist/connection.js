@@ -6,6 +6,7 @@ import { formatAsPrompt } from "./lib/listener.js";
 import { Messenger,                      } from "./lib/messenger.js";
 import { describeWatcher, startWatcher, stopWatcher, takeCurrentRun, watcherState } from "./background.js";
 import { buildQueue, clean, cut, LEASE_MS,              } from "./queue.js";
+import { installMethod, isNewer, latestVersion, updateNotice } from "./update.js";
 import { describeSettings, journalPolicy, needsApproval, parseSetting, resolveSettings, riskNote, SETTING_KEYS, writeSetting, writeSettings,               } from "./settings.js";
 
 export const DEFAULT_SERVER = "https://api.meshingly.com";
@@ -283,10 +284,49 @@ export class Meshingly {
   /** Status, plus what the user allowed: the journal rule and a digest of what the other sessions did. */
   async statusReport()                  {
     const base = this.status();
-    if (!this.connected()) return base;
+    const update = await this.takeUpdateNotice();
+    if (!this.connected()) return [base, ...update].join("\n\n");
     // The digest is for the start of a session: once per process, not on every status call (it can be long).
     const withDigest = !this.digestShown;
-    return [base, ...(await this.memoryParts(withDigest))].join("\n\n");
+    return [base, ...update, ...(await this.memoryParts(withDigest))].join("\n\n");
+  }
+
+          updateLookup                              ;
+          updateShown = false;
+          currentVersion         ;
+
+  /** Remembers which version this is and starts looking for a newer one in the background, if the user left updateCheck on. */
+  startUpdateCheck(current        )       {
+    this.currentVersion = current;
+    this.beginUpdateLookup();
+  }
+
+          beginUpdateLookup()       {
+    const current = this.currentVersion;
+    if (!current || this.updateLookup || !resolveSettings(this.root).values.updateCheck) return;
+    this.updateLookup = latestVersion()
+      .then((latest) => (latest && isNewer(latest, current) ? updateNotice(current, latest, installMethod()) : undefined))
+      .catch((err) => {
+        console.error(`meshingly: the update check failed: ${err instanceof Error ? err.message : String(err)}`);
+        return undefined;
+      });
+  }
+
+  /** The notice, once, if the lookup has finished or finishes within a moment: the status never waits on npm for long. */
+          async takeUpdateNotice()                    {
+    // The setting is read now, not only at start: switching it on or off mid-session takes effect at the next status.
+    if (!resolveSettings(this.root).values.updateCheck) return [];
+    this.beginUpdateLookup();
+    if (!this.updateLookup || this.updateShown) return [];
+    let timer                            ;
+    try {
+      const note = await Promise.race([this.updateLookup, new Promise           ((resolve) => (timer = setTimeout(resolve, 1500, undefined)))]);
+      if (!note) return [];
+      this.updateShown = true;
+      return [note];
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
           digestShown = false;

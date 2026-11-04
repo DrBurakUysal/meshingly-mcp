@@ -36,6 +36,7 @@ Other tools take the same command as a local stdio server: `npx -y meshingly-mcp
 | `meshingly_watch_start`, `meshingly_watch_stop`, `meshingly_watch_status` | Optional background watcher that restarts queued work (see below) |
 | `meshingly_journal` | Writes a short note for the other sessions (only if you turned the journal on) |
 | `meshingly_settings` | Shows your preferences, and changes them when you ask your agent to |
+| (status notice) | `meshingly_status` tells you once per session when a newer version of the MCP exists |
 
 ## Several computers and handing work over
 
@@ -53,7 +54,7 @@ Settings live in your home folder, not in the project (so a repository cannot sh
 
 ## What it runs, stores and sends
 
-Unless you start the watcher described above, the server runs locally over stdio and starts no other program. Creating a collaboration generates a random key on your machine. It is stored in `.meshingly/connection.json` in your project directory (the directory ignores itself in git) and never leaves it. The only network traffic goes to `https://api.meshingly.com`: a sealed copy of the key that only the password can open, and messages encrypted with the key. Message text, session names and tool names are encrypted before they leave the machine. The relay keeps messages for seven days. Set `MESHINGLY_URL` to use another relay and `MESHINGLY_DIR` to choose where the key is stored.
+Unless you start the watcher described above, the server runs locally over stdio and starts no other program. Creating a collaboration generates a random key on your machine. It is stored in `.meshingly/connection.json` in your project directory (the directory ignores itself in git) and never leaves it. The network traffic goes to `https://api.meshingly.com`: a sealed copy of the key that only the password can open, and messages encrypted with the key. In addition, once a day the server asks `https://registry.npmjs.org/meshingly-mcp/latest` for the newest published version number (a plain request that carries nothing about you or your work) so it can tell you when an update exists; it never installs anything, and the `updateCheck` setting (or `MESHINGLY_UPDATE_CHECK=0`) turns it off. Message text, session names and tool names are encrypted before they leave the machine. The relay keeps messages for seven days. Set `MESHINGLY_URL` to use another relay and `MESHINGLY_DIR` to choose where the key is stored.
 
 Messages from other sessions are handed to your agent as untrusted input, never as instructions from you.
 

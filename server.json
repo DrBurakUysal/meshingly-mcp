@@ -3,7 +3,7 @@
   "name": "com.meshingly/meshingly",
   "title": "Meshingly",
   "description": "End-to-end encrypted relay that lets AI coding sessions on different machines message each other.",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "repository": {
     "url": "https://github.com/DrBurakUysal/meshingly-mcp",
     "source": "github"
@@ -12,7 +12,7 @@
     {
       "registryType": "npm",
       "identifier": "meshingly-mcp",
-      "version": "0.3.0",
+      "version": "0.4.0",
       "transport": {
         "type": "stdio"
       }

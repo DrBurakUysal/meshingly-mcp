@@ -33,6 +33,8 @@ import { dirname, join, resolve } from "node:path";
                       
                                       
                                
+                                                                                                                                         
+                       
  
 
                                                                                                                                       
@@ -85,6 +87,12 @@ export const SETTING_INFO                                                       
   },
   maxAttempts: { kind: { type: "int", min: 1, max: 10 }, default: 3, description: "Failed runs per handoff before the watcher gives up on it." },
   checkIntervalSeconds: { kind: { type: "int", min: 5, max: 3600 }, default: 60, description: "Seconds between queue checks." },
+  updateCheck: {
+    kind: { type: "boolean" },
+    default: true,
+    env: "MESHINGLY_UPDATE_CHECK",
+    description: "Once a day, look on npm whether a newer version of the MCP exists and say so in the status. It only reads the public version number and never installs anything.",
+  },
 };
 
 export const SETTING_KEYS = Object.keys(SETTING_INFO)                         ;
@@ -93,7 +101,7 @@ export const SETTING_KEYS = Object.keys(SETTING_INFO)                         ;
  * Settings an AI session may change itself when the user asks for it in the conversation. They decide what is shared inside
  * the collaboration or how patient the watcher is; none of them starts a program.
  */
-export const MODEL_MAY_SET                              = new Set(["journal", "catchUp", "settleMinutes", "maxAttempts", "checkIntervalSeconds"]);
+export const MODEL_MAY_SET                              = new Set(["journal", "catchUp", "settleMinutes", "maxAttempts", "checkIntervalSeconds", "updateCheck"]);
 
 /**
  * Whether a change needs the user's own approval, which the model cannot give. Everything does, except what is on the

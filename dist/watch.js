@@ -6,6 +6,8 @@ import { BEAT_MS, clearBeat, killTree, stateFile, takeCurrentRun, writeBeat } fr
 import { Meshingly, ToolError } from "./connection.js";
 import { LEASE_MS } from "./queue.js";
 import { questionPolicy, resolveSettings,               } from "./settings.js";
+import { isNewer, latestVersion } from "./update.js";
+import { VERSION } from "./version.js";
 
                                
                                                                                           
@@ -290,6 +292,11 @@ export async function runWatch(argv          )                  {
   }
   console.error(m.status());
   if (saved.problem) stamp(`warning: ${saved.problem}`);
+  if (saved.values.updateCheck) {
+    void latestVersion().then((latest) => {
+      if (latest && isNewer(latest, VERSION)) stamp(`a newer version of the Meshingly MCP is available (${VERSION} -> ${latest}): stop the watcher, update, and start it again`);
+    });
+  }
   const abort = new AbortController();
   process.once("SIGINT", () => abort.abort());
   process.once("SIGTERM", () => abort.abort());
