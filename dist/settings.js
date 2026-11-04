@@ -73,7 +73,7 @@ export const SETTING_INFO                                                       
   catchUp: {
     kind: { type: "int", min: 0, max: 200 },
     default: 0,
-    description: "How many recent entries (notes, handoffs, messages) a session reads when it joins or starts, so it knows what the other sessions did. 0 = none.",
+    description: "Turns on the catch-up: when a session joins or starts it gets a short map of the collaboration and this many of the latest entries (at most 6 are quoted), so it knows what the other sessions did. 0 = off.",
   },
   modelMayStartWatcher: {
     kind: { type: "boolean" },

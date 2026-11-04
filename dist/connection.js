@@ -361,8 +361,8 @@ export class Meshingly {
       .filter((m) => !SILENT_TYPES.has(m.payload.type) && m.payload.type !== "hello")
       .sort((a, b) => a.seq - b.seq)
       .slice(-Math.min(n, DIGEST_QUOTED));
-    if (!entries.length) return "Recent activity: nothing has been written in this collaboration yet.";
     const map = buildMap(messages, Date.now(), who);
+    if (!entries.length) return [...(map ? [map, ""] : []), "Recent activity: nothing has been written in this collaboration yet."].join("\n");
     return [...(map ? [map, ""] : []), this.entryLines("Recent activity in this collaboration, oldest first.", entries, messages, self)].join("\n");
   }
 

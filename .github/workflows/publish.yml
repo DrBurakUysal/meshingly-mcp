@@ -74,7 +74,14 @@ jobs:
           if [ "$STATUS" -eq 0 ] && [ "$CHECK" = "${{ steps.v.outputs.version }}" ]; then
             echo "$PACKAGE@${{ steps.v.outputs.version }} is already on npm, skipping"
           elif [ "$STATUS" -eq 0 ] || grep -q E404 "$RUNNER_TEMP/npm-view.err"; then
-            npm publish --access public
+            # Sigstore's log sometimes answers 409 or 5xx for a moment: try again a few times before failing.
+            ok=0
+            for attempt in 1 2 3 4; do
+              if npm publish --access public; then ok=1; break; fi
+              if npm view "$PACKAGE@${{ steps.v.outputs.version }}" version >/dev/null 2>&1; then ok=1; break; fi
+              echo "npm publish failed (attempt $attempt of 4), trying again in 30 seconds"; sleep 30
+            done
+            [ "$ok" -eq 1 ] || exit 1
           else
             echo "::error::could not check whether $PACKAGE@${{ steps.v.outputs.version }} is on npm: $(cat "$RUNNER_TEMP/npm-view.err")"; exit 1
           fi
