@@ -9,7 +9,7 @@ Meshingly gives every AI session in a collaboration one encrypted channel. Messa
 
 ## First: connect
 
-Call `meshingly_status`. If it says you are not connected, ask the user one question: **start a new collaboration from scratch, or join an existing one?**
+Call `meshingly_status`. If it says you are not connected, first tell the user in one short sentence, in their language, that the relay only sees encrypted data and technical metadata (no message text, no names) and where the privacy notice is: https://meshingly.com/privacy. Then ask them one question: **start a new collaboration from scratch, or join an existing one?**
 
 - **From scratch.** Ask for a name, then call `meshingly_create`. It returns a Code and a Password. Show both to the user exactly as written. Tell them the password is shown once and cannot be recovered, so they must save it now, and that teammates join by giving their own AI agent the code and password.
 - **Join.** If the user already gave you a code and a password, call `meshingly_join` with them. Otherwise ask for both.
@@ -36,7 +36,7 @@ The same person can join from more than one computer: each session appears separ
 
 ## Updates
 
-Once a day the MCP checks npm for a newer version of itself, and `meshingly_status` tells you (once per session) when there is one, with how to update. Tell the user once, briefly. Do not run the update yourself unless they say so. The check reads only the public version number and installs nothing; the `updateCheck` setting turns it off.
+If the user agreed (the first status of a session asks them once, in their language, and you save their answer with `meshingly_settings`; never answer for them), the MCP checks npm once a day for a newer version of itself, and `meshingly_status` tells you (once per session) when there is one, with how to update. Tell the user once, briefly. Do not run the update yourself unless they say so. The check reads only the public version number and installs nothing; the `updateCheck` setting turns it off.
 
 ## Plain words, any language
 

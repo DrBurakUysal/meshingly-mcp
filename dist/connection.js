@@ -7,7 +7,7 @@ import { Messenger,                      } from "./lib/messenger.js";
 import { describeWatcher, startWatcher, stopWatcher, takeCurrentRun, watcherState } from "./background.js";
 import { buildQueue, clean, cut, LEASE_MS,              } from "./queue.js";
 import { buildMap, noteMeta, recall } from "./map.js";
-import { installMethod, isNewer, latestVersion, updateNotice } from "./update.js";
+import { installMethod, isNewer, latestVersion, updateNotice, updateQuestion } from "./update.js";
 import { describeSettings, journalPolicy, needsApproval, parseSetting, resolveSettings, riskNote, SETTING_KEYS, writeSetting, writeSettings,               } from "./settings.js";
 
 export const DEFAULT_SERVER = "https://api.meshingly.com";
@@ -298,6 +298,7 @@ export class Meshingly {
 
           updateLookup                              ;
           updateShown = false;
+          updateAsked = false;
           currentVersion         ;
 
   /** Remembers which version this is and starts looking for a newer one in the background, if the user left updateCheck on. */
@@ -320,7 +321,15 @@ export class Meshingly {
   /** The notice, once, if the lookup has finished or finishes within a moment: the status never waits on npm for long. */
           async takeUpdateNotice()                    {
     // The setting is read now, not only at start: switching it on or off mid-session takes effect at the next status.
-    if (!resolveSettings(this.root).values.updateCheck) return [];
+    const settings = resolveSettings(this.root);
+    if (!settings.values.updateCheck) {
+      // Not decided yet (never set, not even by the environment): ask once per session, and make no request meanwhile.
+      if (settings.sources.updateCheck === "default" && !this.updateAsked) {
+        this.updateAsked = true;
+        return [updateQuestion()];
+      }
+      return [];
+    }
     this.beginUpdateLookup();
     if (!this.updateLookup || this.updateShown) return [];
     let timer                            ;

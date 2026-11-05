@@ -89,9 +89,10 @@ export const SETTING_INFO                                                       
   checkIntervalSeconds: { kind: { type: "int", min: 5, max: 3600 }, default: 60, description: "Seconds between queue checks." },
   updateCheck: {
     kind: { type: "boolean" },
-    default: true,
+    // Off until the user has decided: the first session asks (see updateQuestion). The request shows the computer's IP address to npm.
+    default: false,
     env: "MESHINGLY_UPDATE_CHECK",
-    description: "Once a day, look on npm whether a newer version of the MCP exists and say so in the status. It only reads the public version number and never installs anything.",
+    description: "Once a day, look on npm whether a newer version of the MCP exists and say so in the status. It only reads the public version number and never installs anything, but the request shows this computer's IP address to npm. Nothing is asked of npm until you decide: the first session asks you once.",
   },
 };
 

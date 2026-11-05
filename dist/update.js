@@ -94,6 +94,15 @@ export function installMethod(path = fileURLToPath(import.meta.url), env        
   return "other";
 }
 
+/** Shown until the user has decided: no request to npm is made before they answer. Written for the model to ask in the user's language. */
+export function updateQuestion()         {
+  return [
+    "The user has not decided yet whether Meshingly may look for updates. Ask them once, briefly, in their own language:",
+    "once a day the MCP would ask npm (a service in the United States) what the newest version is; the request carries this computer's IP address and nothing else, and nothing is ever installed automatically. Do they want that check?",
+    'Save their answer with meshingly_settings: {"settings":{"updateCheck":true}} for yes, {"settings":{"updateCheck":false}} for no. Until they answer, no request is made. Do not answer for them.',
+  ].join(" ");
+}
+
 /** What the status tells the model, written for the model to pass on to the user. */
 export function updateNotice(current        , latest        , method               )         {
   const how =
