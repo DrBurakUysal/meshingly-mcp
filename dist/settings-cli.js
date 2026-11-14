@@ -1,5 +1,6 @@
 import { createInterface } from "node:readline";
-import { describeSettings, resetSettings, SETTING_KEYS, writeSetting } from "./settings.js";
+import { pairKeyFrom } from "./invite.js";
+import { describeSettings, MAX_OWNER_DEVICES, ownerKeys, resetSettings, resolveSettings, SETTING_KEYS, writeSetting } from "./settings.js";
 
 /** One line from the user. Resolves with "" when there is none (end of input). */
 function ask(prompt        )                  {
@@ -23,13 +24,19 @@ const HELP = `meshingly-mcp settings: your preferences for this project (stored 
   npx -y meshingly-mcp settings set <key> <value>
   npx -y meshingly-mcp settings set <key>        leave the value out to be asked for it (no quoting needed: handy for a command with quotes or $)
   npx -y meshingly-mcp settings reset           back to the defaults
+  npx -y meshingly-mcp settings pair <code>     let your phone or app send this computer prompts (the code, or the meshingly://pair link, from the app's pairing screen)
+  npx -y meshingly-mcp settings unpair [code]   take one paired device (or all of them) away
 
 Keys: ${SETTING_KEYS.join(", ")}
 
 Examples:
   npx -y meshingly-mcp settings set autoResume true        continue queued work automatically after the limit is back
   npx -y meshingly-mcp settings set onQuestion recommended  an unattended run takes the recommended option instead of waiting
+  npx -y meshingly-mcp settings set resumeTool codex        the watcher starts Codex (codex exec, sandboxed); or opencode, claude-code, auto
+  npx -y meshingly-mcp settings set opencodeServer http://127.0.0.1:4096   live prompts into an opencode serve you started (this computer only)
   npx -y meshingly-mcp settings set resumeCommand "codex exec -"
+
+More: npx -y meshingly-mcp adapters codex|opencode (status hooks), npx -y meshingly-mcp invite (QR to join from the app)
 
 You can also just ask your AI session ("turn on the journal", "let every session know what the others did"): it changes the harmless settings itself and asks you to confirm the ones that start programs on this computer.
 A running watcher keeps the values it started with: stop it and start it again after a change.
@@ -50,6 +57,36 @@ export async function runSettings(argv          , root = process.env.MESHINGLY_D
   if (verb === "reset") {
     resetSettings(root);
     console.log("Settings are back to the defaults.");
+    return 0;
+  }
+  if (verb === "pair") {
+    // Typed in a terminal by the user: this is the approval. A prompt from a paired device starts an AI agent here.
+    // The bare key from the app's pairing screen, or the link its QR code holds (meshingly://pair?key=...).
+    const typed = key ?? (await ask("Pairing code from the app: ")).trim();
+    const code = pairKeyFrom(typed) ?? "";
+    if (!code) {
+      console.error("That is not a pairing code or a meshingly://pair link.");
+      return 2;
+    }
+    const current = ownerKeys(resolveSettings(root).values.ownerDevices);
+    if (current.size >= MAX_OWNER_DEVICES && !current.has(code)) {
+      console.error(`${MAX_OWNER_DEVICES} devices are already paired: unpair one first (settings unpair <code>).`);
+      return 2;
+    }
+    try {
+      writeSetting(root, "ownerDevices", [...current, code].join(","));
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err));
+      return 2;
+    }
+    console.log("Paired. Prompts signed by that device now start an AI agent on this computer, with your rights. It takes effect at once, no restart needed.\n`settings unpair` takes it away just as fast.");
+    return 0;
+  }
+  if (verb === "unpair") {
+    const current = ownerKeys(resolveSettings(root).values.ownerDevices);
+    const left = key ? [...current].filter((k) => k !== key) : [];
+    writeSetting(root, "ownerDevices", left.join(","));
+    console.log(key ? "That device is no longer paired." : "No device is paired any more.");
     return 0;
   }
   if (verb === "set") {

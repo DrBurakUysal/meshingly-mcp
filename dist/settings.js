@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { loopbackOrigin } from "./adapters.js";
 
 /**
  * Per-project preferences of the person using Meshingly. They are changed from a terminal (`meshingly-mcp settings`),
@@ -35,9 +36,26 @@ import { dirname, join, resolve } from "node:path";
                                
                                                                                                                                          
                        
+                                                                                                                                     
+                       
+                                                                                                                            
+                         
+                                                                                                                                                                               
+                                                            
+                                                                                                                                                                  
+                         
  
 
-                                                                                                                                      
+/** Ed25519 public key, SPKI DER, base64url: 44 bytes. */
+const OWNER_KEY = /^[A-Za-z0-9_-]{59}$/;
+export const MAX_OWNER_DEVICES = 4;
+
+/** The set of owner keys in a setting value. */
+export function ownerKeys(value        )              {
+  return new Set(value.split(",").map((k) => k.trim()).filter((k) => OWNER_KEY.test(k)));
+}
+
+                                                                                                                                                                                   
 
 export const SETTING_INFO                                                                                                               = {
   autoResume: {
@@ -94,6 +112,30 @@ export const SETTING_INFO                                                       
     env: "MESHINGLY_UPDATE_CHECK",
     description: "Once a day, look on npm whether a newer version of the MCP exists and say so in the status. It only reads the public version number and never installs anything, but the request shows this computer's IP address to npm. Nothing is asked of npm until you decide: the first session asks you once.",
   },
+  ownerDevices: {
+    kind: { type: "keylist" },
+    default: "",
+    description: "Phones and apps allowed to send this computer prompts (their public keys). A prompt from one of them starts an AI agent here with your rights: pair only your own devices, with `settings pair`.",
+  },
+  statusReports: {
+    kind: { type: "boolean" },
+    default: false,
+    env: "MESHINGLY_STATUS",
+    description: "Tell the collaboration whether this session is working, idle or waiting for an approval (the project's folder name and a state, nothing from the conversation), so your app can show it. Everyone in the collaboration can see it.",
+  },
+  resumeTool: {
+    kind: { type: "enum", values: ["claude-code", "codex", "opencode", "auto"] },
+    default: "claude-code",
+    description:
+      "Which AI tool the watcher starts for queued work and phone prompts (when resumeCommand is not set): claude-code, codex, opencode, or auto = the tool this project's own session runs in. Each uses its tool's own sandbox or permission rules, never a skip-permissions flag.",
+  },
+  opencodeServer: {
+    kind: { type: "loopback" },
+    default: "off",
+    env: "MESHINGLY_OPENCODE_SERVER",
+    description:
+      "Address of an `opencode serve` you started yourself on this computer (for example http://127.0.0.1:4096; loopback only), so a phone prompt appears live in your open OpenCode session. Set OPENCODE_SERVER_PASSWORD in the watcher's environment if you gave the server a password. off = not used.",
+  },
 };
 
 export const SETTING_KEYS = Object.keys(SETTING_INFO)                         ;
@@ -102,7 +144,7 @@ export const SETTING_KEYS = Object.keys(SETTING_INFO)                         ;
  * Settings an AI session may change itself when the user asks for it in the conversation. They decide what is shared inside
  * the collaboration or how patient the watcher is; none of them starts a program.
  */
-export const MODEL_MAY_SET                              = new Set(["journal", "catchUp", "settleMinutes", "maxAttempts", "checkIntervalSeconds", "updateCheck"]);
+export const MODEL_MAY_SET                              = new Set(["journal", "catchUp", "settleMinutes", "maxAttempts", "checkIntervalSeconds", "updateCheck", "statusReports"]);
 
 /**
  * Whether a change needs the user's own approval, which the model cannot give. Everything does, except what is on the
@@ -113,6 +155,8 @@ export function needsApproval(key                , value         )          {
   if (MODEL_MAY_SET.has(key)) return false;
   if ((key === "autoResume" || key === "trustPeers" || key === "modelMayStartWatcher") && value === false) return false;
   if (key === "onQuestion" && value === "stop") return false;
+  if (key === "ownerDevices" && value === "") return false; // unpairing everything only takes trust away
+  if (key === "opencodeServer" && value === "off") return false;
   return true;
 }
 
@@ -129,6 +173,12 @@ export function riskNote(key                , value         )         {
       return "unattended runs will decide questions themselves instead of waiting for you (never deleting, spending, publishing or pushing)";
     case "modelMayStartWatcher":
       return "an AI session may start the background watcher without asking you again";
+    case "ownerDevices":
+      return `these phones or apps will be able to start an AI agent on this computer by sending a prompt: ${String(value) || "(none)"}`;
+    case "resumeTool":
+      return `the background watcher will start ${String(value)} (with its own sandbox or permission rules) with queued work and phone prompts as its input`;
+    case "opencodeServer":
+      return `phone prompts will be sent to the OpenCode server at ${String(value)}, which acts on them with your rights`;
     default:
       return "this changes how Meshingly runs on this computer";
   }
@@ -168,8 +218,22 @@ export function parseSetting(key                , raw         )                 
       const n = typeof text === "number" ? text : typeof text === "string" && /^-?\d+$/.test(text) ? Number(text) : Number.NaN;
       return Number.isInteger(n) && n >= kind.min && n <= kind.max ? { ok: true, value: n } : { ok: false, reason: `use a whole number from ${kind.min} to ${kind.max}` };
     }
+    case "loopback": {
+      if (typeof text !== "string") return { ok: false, reason: "use off, or an http address on this computer such as http://127.0.0.1:4096" };
+      if (text === "off") return { ok: true, value: "off" };
+      const origin = loopbackOrigin(text);
+      return origin ? { ok: true, value: origin } : { ok: false, reason: "use off, or an http address on this computer (127.0.0.1, localhost or [::1]) such as http://127.0.0.1:4096" };
+    }
     case "string":
       return typeof text === "string" && text.length > 0 && text.length <= 300 && !/[\r\n]/.test(text) ? { ok: true, value: text } : { ok: false, reason: "use a single line of 1 to 300 characters" };
+    case "keylist": {
+      if (typeof text !== "string") return { ok: false, reason: "use public keys separated by commas, or an empty text for none" };
+      const keys = text.split(",").map((k) => k.trim()).filter(Boolean);
+      if (keys.length > MAX_OWNER_DEVICES || keys.some((k) => !OWNER_KEY.test(k))) {
+        return { ok: false, reason: `use at most ${MAX_OWNER_DEVICES} public keys (59 characters each, from the app's pairing code) separated by commas` };
+      }
+      return { ok: true, value: [...new Set(keys)].join(",") };
+    }
   }
 }
 

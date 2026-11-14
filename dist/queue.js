@@ -18,6 +18,22 @@ export function clean(text        , max        )         {
   return cut(text.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, " ").trim(), max);
 }
 
+/** A prompt from a paired phone or app that nobody has taken within this long is dropped: an old instruction must not start an agent days later. */
+export const PROMPT_TTL_MS = 24 * 3600 * 1000;
+/**
+ * The relay's clock says when a prompt arrived; the owner's signed `sentAt` says when it was written. A member of the
+ * collaboration can re-send an old signed prompt under its old id once the relay has forgotten the original (after a week),
+ * and the relay's clock would call it new. So the signed time must be close to the relay's: a replay is not.
+ */
+export const PROMPT_SENT_SKEW_MS = 15 * 60 * 1000;
+const NO_OWNERS                      = new Set();
+
+/** Whether a prompt's `to` names this computer: `any`, this session's id, or `device:<name>` with this session's device name. */
+export function meantForHere(to                    , device                    , self        )          {
+  if (!to || to === "any" || to === self) return true;
+  return to.startsWith("device:") && device !== undefined && device.toLowerCase() === to.slice(7).trim().toLowerCase();
+}
+
                           
              
               
@@ -33,6 +49,14 @@ export function clean(text        , max        )         {
                     
                                                                          
                         
+                                                                                                                                              
+                      
+                                                                     
+              
+                                                                                                          
+                    
+                                                                                                                                   
+                            
                                       
                               
                      
@@ -49,7 +73,19 @@ export const at = (m                 )         => (typeof m.createdAt === "numbe
  * - the owner can "release" a claim at once;
  * - "done" counts only when it comes from the current owner.
  */
-export function buildQueue(messages                   , now        )            {
+/** Who a claim, release or done message speaks for: the session AND the process in it (a watcher and a live session share one session id). */
+const holder = (m                 )         => `${m.senderSessionId}|${m.payload.meta?.claimer ?? ""}`;
+
+/**
+ * `deviceOf` names the computer a session said it runs on. A prompt aimed at one computer can only be claimed from it
+ * (otherwise any member could claim or finish the user's prompt and keep it from running); a prompt for `any` computer can be taken by any.
+ */
+export function buildQueue(
+  messages                   ,
+  now        ,
+  owners                      = NO_OWNERS,
+  deviceOf                                            = () => undefined,
+)            {
   const sorted = [...messages].sort((a, b) => a.seq - b.seq);
   const handoffs = new Map                 ();
   const about = new Map                           ();
@@ -69,28 +105,59 @@ export function buildQueue(messages                   , now        )            
         ...(meta.needsPerson === "1" ? { needsPerson: true } : {}),
         status: "open",
       });
+    } else if (m.payload.type === "prompt" && m.senderKey !== undefined && owners.has(m.senderKey)) {
+      const sent = Date.parse(m.payload.sentAt);
+      if (!Number.isFinite(sent) || at(m) - sent > PROMPT_SENT_SKEW_MS) continue; // written long before it arrived: a replay (or a clock that is far off)
+      const meta = m.payload.meta ?? {};
+      handoffs.set(m.id, {
+        id: m.id,
+        seq: m.seq,
+        fromSessionId: m.senderSessionId,
+        title: clean(m.payload.body.split("\n")[0] ?? "", 80) || "Prompt",
+        body: m.payload.body,
+        sentAt: m.payload.sentAt,
+        createdAt: at(m),
+        fromOwner: true,
+        to: clean(meta.to ?? "any", 80) || "any",
+        promptId: clean(meta.promptId ?? m.id, 80) || m.id,
+        status: "open",
+      });
     } else if (m.payload.type === "claim" || m.payload.type === "release" || m.payload.type === "done") {
       const target = m.payload.meta?.handoff;
       if (typeof target === "string") about.set(target, [...(about.get(target) ?? []), m]);
     }
   }
 
+  const stale = new Set        ();
   for (const [id, h] of handoffs) {
-    const mine = about.get(id) ?? [];
+    const everything = about.get(id) ?? [];
+    const claimAllowed = (m                 )          => {
+      if (!h.fromOwner || m.payload.type !== "claim") return true;
+      const to = h.to ?? "any";
+      if (to === "any") return true;
+      if (to.startsWith("device:")) return deviceOf(m.senderSessionId)?.toLowerCase() === to.slice(7).trim().toLowerCase();
+      return m.senderSessionId === to;
+    };
+    const mine = everything.filter(claimAllowed);
     const finished = (claim                 )          =>
-      mine.some((m) => m.payload.type === "done" && m.senderSessionId === claim.senderSessionId && m.seq > claim.seq);
+      mine.some((m) => m.payload.type === "done" && holder(m) === holder(claim) && m.seq > claim.seq);
     const leased = (m                 )          => {
       const age = now - at(m);
       return age > -CLOCK_SKEW_MS && age < LEASE_MS;
     };
     // The owner can give the work back ("release") instead of making everyone wait for the lease to run out.
     const released = (claim                 )          =>
-      mine.some((m) => m.payload.type === "release" && m.senderSessionId === claim.senderSessionId && m.seq > claim.seq);
+      mine.some((m) => m.payload.type === "release" && holder(m) === holder(claim) && m.seq > claim.seq);
     const owner = mine.find((m) => m.payload.type === "claim" && (finished(m) || (leased(m) && !released(m))));
-    if (!owner) continue;
+    if (!owner) {
+      // The user's prompt was taken and the taker neither finished nor gave it back: it may well have run. Reopening it would run it a second time.
+      if (h.fromOwner && mine.some((m) => m.payload.type === "claim" && !finished(m) && !released(m) && !leased(m))) stale.add(id);
+      continue;
+    }
     h.status = finished(owner) ? "done" : "claimed";
     h.claimedBySessionId = owner.senderSessionId;
+    h.claimedByClaimer = owner.payload.meta?.claimer ?? "";
     h.claimedAt = owner.payload.sentAt;
   }
-  return [...handoffs.values()];
+  return [...handoffs.values()].filter((h) => !stale.has(h.id) && !(h.fromOwner && h.status === "open" && now - h.createdAt > PROMPT_TTL_MS));
 }

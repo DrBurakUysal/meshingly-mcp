@@ -34,7 +34,8 @@ export class BrokerClient {
     this.retry = { ...DEFAULT_RETRY, ...opts.retry };
   }
 
-  push(msg                                                             )                                               {
+  /** `notify` is the one plaintext hint the relay may turn into a push notification (a kind, never content). */
+  push(msg                                                                                                         )                                               {
     return this.request("POST", `/v1/channels/${this.channelId}/messages`, msg);
   }
 

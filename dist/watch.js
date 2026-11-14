@@ -1,10 +1,11 @@
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { parseArgs } from "node:util";
+import { deliverToOpenCode, loopbackOrigin, presetCommand, recordedToolSession, resolveTool,           } from "./adapters.js";
 import { BEAT_MS, clearBeat, killTree, stateFile, takeCurrentRun, writeBeat } from "./background.js";
 import { Meshingly, ToolError } from "./connection.js";
-import { LEASE_MS } from "./queue.js";
+import { LEASE_MS, meantForHere } from "./queue.js";
 import { questionPolicy, resolveSettings,               } from "./settings.js";
 import { isNewer, latestVersion } from "./update.js";
 import { VERSION } from "./version.js";
@@ -29,6 +30,11 @@ import { VERSION } from "./version.js";
                     
                       
                               
+                                                                                                                                            
+                            
+                                                                                                                                             
+                          
+              
  
 
 const HELP = `meshingly-mcp watch: wakes up an AI session when work is waiting in the Meshingly queue.
@@ -55,6 +61,14 @@ handoff as the prompt, in the project directory. If the command succeeds the han
 
 Every option has a setting that is used when the flag is absent: npx -y meshingly-mcp settings
 `;
+
+/** How often an idle watcher tells the app it is alive (only with statusReports on): the app calls a computer offline after a few quiet minutes. */
+const PRESENCE_MS = 90_000;
+
+/** The watcher shows up in the app as a session of its own ("watcher"): alive, running a task, or stopped. Only a state, never the task's text. */
+async function presence(m           , root        , state                              , text        )                {
+  await m.reportStatus({ state, agent: "watcher", project: basename(root), text });
+}
 
 function sleep(ms        , signal             )                {
   return new Promise((resolve) => {
@@ -141,10 +155,15 @@ async function pass(m           , o              , st       , root        )     
     if (o.signal.aborted) return false;
     if (h.status !== "open") continue; // someone is on it (a live session of this project included)
     if (h.needsPerson) continue; // a question for a human, not work for an agent
-    if (!o.fromPeers && h.fromSessionId !== self) continue;
+    // A prompt from a paired owner device is the user's own request: it needs neither trustPeers nor the settle wait,
+    // but it must be meant for this computer.
+    if (h.fromOwner && !meantForHere(h.to, m.deviceName(), self)) continue;
+    if (!h.fromOwner && !o.fromPeers && h.fromSessionId !== self) continue;
     if ((st.attempts.get(h.id) ?? 0) >= o.maxAttempts) continue;
     if ((st.retryAt.get(h.id) ?? 0) > now) continue;
-    if (h.resetsAt) {
+    if (h.fromOwner) {
+      /* now */
+    } else if (h.resetsAt) {
       if (Date.parse(h.resetsAt) > now) continue; // the limit is not back yet
     } else if (now - h.createdAt < o.settleMs) {
       continue; // no reset time: the session that parked it may still be working
@@ -152,7 +171,7 @@ async function pass(m           , o              , st       , root        )     
 
     let prompt        ;
     try {
-      prompt = await m.claim({ id: h.id });
+      prompt = await m.claim({ id: h.id, quiet: true });
     } catch (err) {
       if (err instanceof ToolError) {
         o.log(`"${h.title}": ${err.message}`);
@@ -161,20 +180,37 @@ async function pass(m           , o              , st       , root        )     
       throw err;
     }
     const attempt = (st.attempts.get(h.id) ?? 0) + 1;
+    const full = `${prompt}\n\nContinue this work in the current project directory. When it is finished, call meshingly_done with handoff id ${h.id}. If you are about to run out of usage again, call meshingly_handoff with the new state and stop.\n\n${questionPolicy(o.onQuestion)}`;
+    // OpenCode, live: only the user's own prompts (a verified paired device), only to a server the user started on this computer.
+    if (h.fromOwner && o.tool === "opencode" && o.opencodeServer && o.opencodeServer !== "off") {
+      const live = await deliverToOpenCode({ server: o.opencodeServer, root, text: full, hint: recordedToolSession(root, "opencode"), password: process.env.OPENCODE_SERVER_PASSWORD });
+      if (live.ok) {
+        await m.ack(h, "delivered", "server", "shown in your open OpenCode session");
+        await m.done({ id: h.id, summary: "delivered to the running OpenCode session", quiet: true });
+        o.log(`"${h.title}": delivered to the OpenCode session ${live.sessionId} through its local server`);
+        return true;
+      }
+      o.log(`"${h.title}": no live delivery (${live.reason}); starting the command instead`);
+    }
+    if (h.fromOwner) {
+      await m.ack(h, "delivered", "queue");
+      await m.ack(h, "running", "resume");
+    }
     st.attempts.set(h.id, attempt);
     st.current = h.id;
     saveState(root, st, known);
     o.log(`"${h.title}": claimed, starting the command (attempt ${attempt}/${o.maxAttempts})`);
 
-    const full = `${prompt}\n\nContinue this work in the current project directory. When it is finished, call meshingly_done with handoff id ${h.id}. If you are about to run out of usage again, call meshingly_handoff with the new state and stop.\n\n${questionPolicy(o.onQuestion)}`;
+    await presence(m, root, "working", "running a queued task");
     let code        ;
     try {
-      code = await runCommand(o.command, full, root, { ...process.env, MESHINGLY_DIR: root }, o.maxRunMs, o.signal);
+      code = await runCommand(o.commandFor ? o.commandFor() : o.command, full, root, { ...process.env, MESHINGLY_DIR: root, MESHINGLY_CLAIMER: "watcher" }, o.maxRunMs, o.signal);
     } catch (err) {
       o.log(`"${h.title}": could not start the command: ${err instanceof Error ? err.message : String(err)}`);
       code = 127;
     }
     st.current = undefined;
+    await presence(m, root, "idle", "watching the queue");
 
     // The run may have parked its own continuation (usage ran out again, or it has a question). That new handoff
     // replaces this one, and it inherits the attempt count and waits like a failure would: otherwise it would be
@@ -190,14 +226,16 @@ async function pass(m           , o              , st       , root        )     
     }
     if (parked.length > 0) {
       // Whatever the exit code, the continuation carries the work forward: handing the original back too would leave two copies.
-      await m.done({ id: h.id, summary: "continued in a new handoff" });
+      await m.done({ id: h.id, summary: "continued in a new handoff", quiet: true });
       o.log(`"${h.title}": replaced by the handoff the run parked`);
     } else if (code === 0) {
       // The agent normally reports "done" itself; this makes it so when it did not (the call is idempotent).
-      await m.done({ id: h.id, summary: "finished by the watcher's run" });
+      await m.done({ id: h.id, summary: "finished by the watcher's run", quiet: true });
+      if (h.fromOwner) await m.ack(h, "done", "resume", "finished");
       o.log(`"${h.title}": finished`);
     } else {
       await m.release({ id: h.id });
+      if (h.fromOwner) await m.ack(h, attempt >= o.maxAttempts ? "rejected" : "received", "resume", `the run failed (exit ${code})${attempt >= o.maxAttempts ? "; giving up" : "; it will be tried again"}`);
       st.retryAt.set(h.id, Date.now() + wait);
       o.log(
         attempt >= o.maxAttempts
@@ -217,14 +255,19 @@ export async function watch(m           , o              , root        )        
   const stale = takeCurrentRun(root);
   if (stale) {
     try {
-      await m.release({ id: stale });
+      await m.release({ id: stale, asClaimer: "watcher" });
       o.log(`gave back a handoff that a previous watcher was working on when it stopped`);
     } catch (err) {
       o.log(`could not give back an interrupted handoff: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
   const st = loadState(root);
+  let lastPresence = 0;
   while (!o.signal.aborted) {
+    if (Date.now() - lastPresence >= PRESENCE_MS) {
+      lastPresence = Date.now();
+      await presence(m, root, "idle", "watching the queue");
+    }
     try {
       // Drain what is ready; a failed item waits for its retry time, so this cannot spin.
       while (await pass(m, o, st, root)) {
@@ -236,6 +279,7 @@ export async function watch(m           , o              , root        )        
     if (o.once) return;
     await sleep(o.intervalMs, o.signal);
   }
+  await presence(m, root, "ended", "the watcher stopped");
 }
 
 /** Entry point for `meshingly-mcp watch ...`. Returns the process exit code. */
@@ -267,11 +311,17 @@ export async function runWatch(argv          )                  {
   const root = values.dir ?? process.env.MESHINGLY_DIR ?? process.cwd();
   // A flag wins; otherwise the setting (which an environment variable in the MCP configuration overrides).
   const saved = resolveSettings(root);
+  const m = new Meshingly(root, undefined, "watcher");
   const interval = values.interval === undefined ? saved.values.checkIntervalSeconds : Number(values.interval);
   const maxAttempts = values["max-attempts"] === undefined ? saved.values.maxAttempts : Number(values["max-attempts"]);
   const settleMinutes = values["settle-minutes"] === undefined ? saved.values.settleMinutes : Number(values["settle-minutes"]);
   const onQuestion = values["on-question"] ?? saved.values.onQuestion;
-  const command = values.cmd ?? saved.values.resumeCommand;
+  // A command the user wrote (flag, setting or environment) is used as it is. Otherwise the preset of the chosen tool: a fixed
+  // program with fixed, permission-limited flags (see adapters.ts).
+  const tool = resolveTool(saved.values.resumeTool, m.localTool());
+  const custom = values.cmd !== undefined || saved.sources.resumeCommand !== "default";
+  const command = values.cmd ?? (custom ? saved.values.resumeCommand : presetCommand(tool));
+  const opencodeServer = saved.values.opencodeServer === "off" ? undefined : loopbackOrigin(saved.values.opencodeServer);
   const fromPeers = values["from-peers"] ?? saved.values.trustPeers;
   if (
     !(interval >= 5) ||
@@ -283,7 +333,6 @@ export async function runWatch(argv          )                  {
     console.error(`--interval must be at least 5 seconds, --max-attempts a whole number of 1 or more, --settle-minutes 0 or more and --on-question stop or recommended.\n\n${HELP}`);
     return 2;
   }
-  const m = new Meshingly(root);
   const stamp = (line        ) => console.error(`${new Date().toISOString()} meshingly watch: ${line}`);
 
   if (!m.connected()) {
@@ -324,6 +373,9 @@ export async function runWatch(argv          )                  {
         backoffMs: 30 * 60_000,
         signal: abort.signal,
         log: stamp,
+        tool,
+        ...(opencodeServer ? { opencodeServer } : {}),
+        ...(custom ? {} : { commandFor: () => presetCommand(tool, tool === "claude-code" ? undefined : recordedToolSession(root, tool)) }),
       },
       root,
     );

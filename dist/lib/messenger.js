@@ -13,6 +13,8 @@ import { parsePayload, signingInput,                                } from "./pr
                    
                                                                             
                     
+                                                                                                                               
+                     
  
 
 export class Messenger {
@@ -22,7 +24,11 @@ export class Messenger {
 
                    session              ;
 
-  constructor(config             , session              , client               ) {
+  /** Keys the user trusted by name (paired owner devices): they cannot be locked out by someone who pinned their session id first. */
+                   trusted                           ;
+
+  constructor(config             , session              , client               , trusted                            = () => new Set()) {
+    this.trusted = trusted;
     this.session = session;
     const { channelId, authToken } = deriveChannel(config.cryptKey);
     this.channelId = channelId;
@@ -30,14 +36,14 @@ export class Messenger {
     this.client = client ?? new BrokerClient({ serverUrl: config.serverUrl, channelId, authToken });
   }
 
-  async send(type        , body        , meta                         )                                       {
+  async send(type        , body        , meta                         , opts                                                 )                                       {
     const id = randomUUID();
     const payload          = { type, body, meta, sentAt: new Date().toISOString() };
     const aad = buildAad(this.channelId, id, this.session.sessionId);
     const { publicKey, privateKey } = this.session.signingKeys;
     const sig = signMessage(privateKey, signingInput(aad, payload));
     const envelope = encrypt(this.cryptKey, JSON.stringify({ ...payload, pub: publicKey, sig }), aad);
-    const { seq } = await this.client.push({ id, senderSessionId: this.session.sessionId, envelope });
+    const { seq } = await this.client.push({ id, senderSessionId: this.session.sessionId, envelope, ...(opts?.notify ? { notify: opts.notify } : {}) });
     return { id, seq };
   }
 
@@ -93,6 +99,7 @@ export class Messenger {
           createdAt: wire.createdAt,
           payload,
           sender: this.session.peerInfo[wire.senderSessionId],
+          senderKey: signed.pub,
         });
       } catch (err) {
         onSkip(wire, err instanceof Error ? err.message : String(err));
@@ -113,7 +120,10 @@ export class Messenger {
     if (pinned === undefined) {
       this.session.peers[senderSessionId] = pub;
     } else if (pinned !== pub) {
-      throw new Error(`Sender key mismatch for session ${senderSessionId} (possible impersonation)`);
+      // A member can sign one message under the phone's (public) session id before the phone's own message is seen, and so pin
+      // their key to it. The key the user paired is stronger than a first sight: it takes the pin over.
+      if (!this.trusted().has(pub)) throw new Error(`Sender key mismatch for session ${senderSessionId} (possible impersonation)`);
+      this.session.peers[senderSessionId] = pub;
     }
   }
 
