@@ -5,6 +5,8 @@ import { loadOrCreateSession, saveSession,                                      
 import { defuse, formatAsPrompt } from "./lib/listener.js";
 import { Messenger,                      } from "./lib/messenger.js";
 import { describeWatcher, startWatcher, stopWatcher, takeCurrentRun, watcherState } from "./background.js";
+import { joinLink } from "./invite.js";
+import { encodeQr, renderTerminal } from "./qr.js";
 import { at, buildQueue, clean, cleanBlock, cut, LEASE_MS, meantForHere,              } from "./queue.js";
 
 /** The longest result shown on the phone. */
@@ -302,6 +304,23 @@ export class Meshingly {
     return `Connected to "${conn.collaboration}" (code ${formatCode(conn.code)}) as ${conn.name} (${conn.tool}, role ${conn.role}, on ${conn.device ?? loadOrCreateSession(conn.role, this.root).device ?? "an unnamed computer"}).${watcherState(this.root).running ? " A background watcher is running." : ""}`;
   }
 
+  /** A QR code with the code and password, for teammates to scan in the app (Join, Scan QR). Shown once, with the password; never stored. */
+          joinQr(code        , password        )           {
+    try {
+      const link = joinLink(code, password);
+      return [
+        "",
+        "Quick join from the phone app: show this QR code to the user in a code block exactly as written (monospace, no changes). Teammates scan it in the Meshingly app (Join, Scan QR) and are in at once. It carries the password: tell the user to share it only with people they trust, in private, never in a public channel.",
+        "```",
+        renderTerminal(encodeQr(link, { ecc: "M" })),
+        "```",
+        `The same as a link (opens the app on a phone): ${link}`,
+      ];
+    } catch {
+      return []; // the QR is a convenience; the code and password above are enough
+    }
+  }
+
   async create(args                                                )                  {
     this.refuseIfConnected(args.replace);
     const name = args.name.trim();
@@ -322,6 +341,7 @@ export class Meshingly {
       "",
       "Show the code and the password to the user exactly as written, and tell them: the password is displayed only once and nobody, not even Meshingly, can recover it, so they should save it now.",
       "Teammates connect by telling their own AI agent: go to https://meshingly.com/install.md, join the collaboration with this code and this password.",
+      ...this.joinQr(created.code, created.password),
       // Whatever the user switched on (the journal rule) applies from the very first session of a new collaboration.
       ...(await this.memoryParts(false).then((p) => p.flatMap((x) => ["", x]))),
     ].join("\n");
