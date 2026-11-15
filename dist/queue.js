@@ -18,6 +18,19 @@ export function clean(text        , max        )         {
   return cut(text.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, " ").trim(), max);
 }
 
+/** Plain text that may span lines (the result of a run, shown on the phone): control characters go, line breaks stay, blank runs collapse. */
+export function cleanBlock(text        , max        )         {
+  return cut(
+    text
+      .replace(/\r\n?/g, "\n")
+      .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u2028\u2029]+/g, " ")
+      .replace(/[ \t]+\n/g, "\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim(),
+    max,
+  );
+}
+
 /** A prompt from a paired phone or app that nobody has taken within this long is dropped: an old instruction must not start an agent days later. */
 export const PROMPT_TTL_MS = 24 * 3600 * 1000;
 /**

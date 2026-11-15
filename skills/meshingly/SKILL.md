@@ -36,7 +36,7 @@ The same person can join from more than one computer: each session appears separ
 
 ## Updates
 
-If the user agreed (the first status of a session asks them once, in their language, and you save their answer with `meshingly_settings`; never answer for them), the MCP checks npm once a day for a newer version of itself, and `meshingly_status` tells you (once per session) when there is one, with how to update. Tell the user once, briefly. Do not run the update yourself unless they say so. The check reads only the public version number and installs nothing; the `updateCheck` setting turns it off.
+Unless the user switched it off (`updateCheck`, on by default), the MCP checks npm once a day for a newer version of itself, and `meshingly_status` tells you (once per session) when there is one, with how to update. Tell the user once, briefly. Do not run the update yourself unless they say so. The check reads only the public version number and installs nothing; the `updateCheck` setting turns it off.
 
 ## Plain words, any language
 

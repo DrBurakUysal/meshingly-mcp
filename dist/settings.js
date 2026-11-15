@@ -105,13 +105,13 @@ export const SETTING_INFO                                                       
     description: "How long a handoff without a limit-reset time waits before the watcher runs it, in case the session that parked it is still working.",
   },
   maxAttempts: { kind: { type: "int", min: 1, max: 10 }, default: 3, description: "Failed runs per handoff before the watcher gives up on it." },
-  checkIntervalSeconds: { kind: { type: "int", min: 5, max: 3600 }, default: 60, description: "Seconds between queue checks." },
+  checkIntervalSeconds: { kind: { type: "int", min: 5, max: 3600 }, default: 15, description: "Seconds between queue checks (a prompt from your phone starts within about this long)." },
   updateCheck: {
     kind: { type: "boolean" },
-    // Off until the user has decided: the first session asks (see updateQuestion). The request shows the computer's IP address to npm.
-    default: false,
+    // On by default (the user's decision, privacy notice updated): the request shows the computer's IP address to npm.
+    default: true,
     env: "MESHINGLY_UPDATE_CHECK",
-    description: "Once a day, look on npm whether a newer version of the MCP exists and say so in the status. It only reads the public version number and never installs anything, but the request shows this computer's IP address to npm. Nothing is asked of npm until you decide: the first session asks you once.",
+    description: "Once a day, look on npm whether a newer version of the MCP exists and say so in the status. On by default. It only reads the public version number and never installs anything, but the request shows this computer's IP address to npm; switch it off with `settings set updateCheck false`.",
   },
   ownerDevices: {
     kind: { type: "keylist" },

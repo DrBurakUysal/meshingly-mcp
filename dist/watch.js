@@ -5,7 +5,7 @@ import { parseArgs } from "node:util";
 import { deliverToOpenCode, loopbackOrigin, presetCommand, recordedToolSession, resolveTool,           } from "./adapters.js";
 import { BEAT_MS, clearBeat, killTree, stateFile, takeCurrentRun, writeBeat } from "./background.js";
 import { Meshingly, ToolError } from "./connection.js";
-import { LEASE_MS, meantForHere } from "./queue.js";
+import { clean, LEASE_MS, meantForHere } from "./queue.js";
 import { questionPolicy, resolveSettings,               } from "./settings.js";
 import { isNewer, latestVersion } from "./update.js";
 import { VERSION } from "./version.js";
@@ -84,10 +84,18 @@ function sleep(ms        , signal             )                {
 }
 
 /** Runs the command with the prompt on stdin and resolves with its exit code (124 when it was stopped for running too long). */
-function runCommand(command        , prompt        , cwd        , env                   , maxRunMs        , signal             )                  {
+/** The agent's own output, kept as its tail (an agent prints its final answer last): what the phone shows as the result. */
+const OUTPUT_TAIL = 6000;
+
+function runCommand(command        , prompt        , cwd        , env                   , maxRunMs        , signal             , onOutput                         )                  {
   return new Promise((resolve, reject) => {
     // Detached on POSIX: its own process group, so a timeout can end the agent and not just the shell around it.
-    const child = spawn(command, { shell: true, cwd, env, stdio: ["pipe", "inherit", "inherit"], detached: process.platform !== "win32" });
+    const child = spawn(command, { shell: true, cwd, env, stdio: ["pipe", "pipe", "inherit"], detached: process.platform !== "win32" });
+    let tail = "";
+    child.stdout.on("data", (chunk        ) => {
+      process.stdout.write(chunk); // still visible in the watcher log
+      tail = (tail + chunk.toString("utf8")).slice(-OUTPUT_TAIL);
+    });
     let timedOut = false;
     const stop = () => {
       if (child.pid) killTree(child.pid);
@@ -104,6 +112,7 @@ function runCommand(command        , prompt        , cwd        , env           
     child.on("exit", (code) => {
       clearTimeout(timer);
       signal.removeEventListener("abort", stop);
+      onOutput?.(tail);
       resolve(timedOut ? 124 : (code ?? 1));
     });
     // A command that exits before reading its input closes the pipe: that is a failed run, not a crash of the watcher.
@@ -201,10 +210,14 @@ async function pass(m           , o              , st       , root        )     
     saveState(root, st, known);
     o.log(`"${h.title}": claimed, starting the command (attempt ${attempt}/${o.maxAttempts})`);
 
+    // The user's other sessions in this collaboration hear about it too: a prompt from the phone (or another computer's
+    // app) is not only for this watcher. A plain "update" message, so every session sees it in its own receive.
+    if (h.fromOwner) await m.send({ type: "update", text: `From the user's paired device: "${clean(h.title, 120)}": started here by the background watcher (${o.tool ?? "agent"}).` }).catch(() => {});
     await presence(m, root, "working", "running a queued task");
     let code        ;
+    let output = "";
     try {
-      code = await runCommand(o.commandFor ? o.commandFor() : o.command, full, root, { ...process.env, MESHINGLY_DIR: root, MESHINGLY_CLAIMER: "watcher" }, o.maxRunMs, o.signal);
+      code = await runCommand(o.commandFor ? o.commandFor() : o.command, full, root, { ...process.env, MESHINGLY_DIR: root, MESHINGLY_CLAIMER: "watcher" }, o.maxRunMs, o.signal, (tail) => (output = tail));
     } catch (err) {
       o.log(`"${h.title}": could not start the command: ${err instanceof Error ? err.message : String(err)}`);
       code = 127;
@@ -231,11 +244,12 @@ async function pass(m           , o              , st       , root        )     
     } else if (code === 0) {
       // The agent normally reports "done" itself; this makes it so when it did not (the call is idempotent).
       await m.done({ id: h.id, summary: "finished by the watcher's run", quiet: true });
-      if (h.fromOwner) await m.ack(h, "done", "resume", "finished");
+      if (h.fromOwner) await m.ack(h, "done", "resume", "finished", output);
+      if (h.fromOwner) await m.send({ type: "update", text: `From the user's paired device: "${clean(h.title, 120)}": finished.${output.trim() ? ` Result: ${clean(output.trim().slice(-600), 600)}` : ""}` }).catch(() => {});
       o.log(`"${h.title}": finished`);
     } else {
       await m.release({ id: h.id });
-      if (h.fromOwner) await m.ack(h, attempt >= o.maxAttempts ? "rejected" : "received", "resume", `the run failed (exit ${code})${attempt >= o.maxAttempts ? "; giving up" : "; it will be tried again"}`);
+      if (h.fromOwner) await m.ack(h, attempt >= o.maxAttempts ? "rejected" : "received", "resume", `the run failed (exit ${code})${attempt >= o.maxAttempts ? "; giving up" : "; it will be tried again"}`, output);
       st.retryAt.set(h.id, Date.now() + wait);
       o.log(
         attempt >= o.maxAttempts

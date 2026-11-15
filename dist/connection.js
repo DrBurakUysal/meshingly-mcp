@@ -5,7 +5,10 @@ import { loadOrCreateSession, saveSession,                                      
 import { defuse, formatAsPrompt } from "./lib/listener.js";
 import { Messenger,                      } from "./lib/messenger.js";
 import { describeWatcher, startWatcher, stopWatcher, takeCurrentRun, watcherState } from "./background.js";
-import { at, buildQueue, clean, cut, LEASE_MS, meantForHere,              } from "./queue.js";
+import { at, buildQueue, clean, cleanBlock, cut, LEASE_MS, meantForHere,              } from "./queue.js";
+
+/** The longest result shown on the phone. */
+const RESULT_MAX = 3000;
 import { createHash, randomUUID } from "node:crypto";
 import { buildMap, noteMeta, recall } from "./map.js";
 import { installMethod, isNewer, latestVersion, updateNotice, updateQuestion } from "./update.js";
@@ -763,7 +766,7 @@ export class Meshingly {
   }
 
   /** Tells the app how a prompt it sent is going. Never throws: a lost acknowledgement must not stop the work. */
-  async ack(h                                   , state                                                            , via        , reason         )                {
+  async ack(h                                   , state                                                            , via        , reason         , result         )                {
     try {
       const { messenger } = this.require();
       await messenger.send(
@@ -775,6 +778,8 @@ export class Meshingly {
           state,
           via,
           ...(reason ? { reason: cut(clean(reason, 200), 200) } : {}),
+          // What the run produced, for the phone to show (end-to-end encrypted like everything else).
+          ...(result && cleanBlock(result, RESULT_MAX) ? { result: cleanBlock(result, RESULT_MAX) } : {}),
         },
         // Only the final "done" can wake the phone; every other acknowledgement is silent.
         state === "done" ? { notify: "prompt-done" } : undefined,
@@ -864,7 +869,7 @@ export class Meshingly {
     if (h.claimedBySessionId !== session.sessionId || (h.claimedByClaimer ?? "") !== this.claimer) throw new ToolError("Only the session that claimed a handoff can finish it.");
     if (h.status === "done") return "Already marked as finished.";
     await messenger.send("done", args.summary.trim() || `finished "${h.title}"`, { handoff: id, claimer: this.claimer });
-    if (h.fromOwner && !args.quiet) await this.ack(h, "done", "session", args.summary.trim() || "finished");
+    if (h.fromOwner && !args.quiet) await this.ack(h, "done", "session", args.summary.trim() || "finished", args.summary);
     return `"${h.title}" is marked finished and the peers can see it.`;
   }
 
