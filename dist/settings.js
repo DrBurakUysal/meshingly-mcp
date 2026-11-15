@@ -61,9 +61,9 @@ export function ownerKeys(value        )              {
 export const SETTING_INFO                                                                                                               = {
   autoResume: {
     kind: { type: "boolean" },
-    default: false,
+    default: true,
     env: "MESHINGLY_AUTOWATCH",
-    description: "Start the background watcher automatically, so queued work continues after the usage limit is back.",
+    description: "Start the background watcher automatically (on by default), so queued work and prompts from your paired phone are carried out even when no session is open, and work continues after the usage limit is back. Only your own handoffs and your paired phone are run; teammates' only with trustPeers.",
   },
   resumeCommand: {
     kind: { type: "string" },
@@ -96,7 +96,7 @@ export const SETTING_INFO                                                       
   },
   modelMayStartWatcher: {
     kind: { type: "boolean" },
-    default: false,
+    default: true,
     description: "Let an AI session start the background watcher with its meshingly_watch_start tool. Off: only you start it (watch command, or autoResume).",
   },
   settleMinutes: {
@@ -132,7 +132,7 @@ export const SETTING_INFO                                                       
   },
   resumeTool: {
     kind: { type: "enum", values: ["claude-code", "codex", "opencode", "auto"] },
-    default: "claude-code",
+    default: "auto",
     description:
       "Which AI tool the watcher starts for queued work and phone prompts (when resumeCommand is not set): claude-code, codex, opencode, or auto = the tool this project's own session runs in. Each uses its tool's own sandbox or permission rules, never a skip-permissions flag.",
   },
