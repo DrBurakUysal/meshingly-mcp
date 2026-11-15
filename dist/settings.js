@@ -38,6 +38,7 @@ import { loopbackOrigin } from "./adapters.js";
                        
                                                                                                                                      
                        
+                         
                                                                                                                             
                          
                                                                                                                                                                                
@@ -117,6 +118,12 @@ export const SETTING_INFO                                                       
     default: "",
     description: "Phones and apps allowed to send this computer prompts (their public keys). A prompt from one of them starts an AI agent here with your rights: pair only your own devices, with `settings pair`.",
   },
+  autoPairPhone: {
+    kind: { type: "boolean" },
+    default: true,
+    env: "MESHINGLY_AUTOPAIR",
+    description: "While no phone is paired, the first Meshingly app of this collaboration that joins under your own name is paired by itself (so prompts from your phone work without typing a code). Only one phone is paired this way, `settings unpair` takes it away, and turning this off means pairing only with `settings pair`.",
+  },
   statusReports: {
     kind: { type: "boolean" },
     default: false,
@@ -155,6 +162,7 @@ export function needsApproval(key                , value         )          {
   if (MODEL_MAY_SET.has(key)) return false;
   if ((key === "autoResume" || key === "trustPeers" || key === "modelMayStartWatcher") && value === false) return false;
   if (key === "onQuestion" && value === "stop") return false;
+  if (key === "autoPairPhone" && value === false) return false;
   if (key === "ownerDevices" && value === "") return false; // unpairing everything only takes trust away
   if (key === "opencodeServer" && value === "off") return false;
   return true;

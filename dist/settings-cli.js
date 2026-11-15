@@ -1,6 +1,6 @@
 import { createInterface } from "node:readline";
 import { pairKeyFrom } from "./invite.js";
-import { describeSettings, MAX_OWNER_DEVICES, ownerKeys, resetSettings, resolveSettings, SETTING_KEYS, writeSetting } from "./settings.js";
+import { describeSettings, MAX_OWNER_DEVICES, ownerKeys, resetSettings, resolveSettings, SETTING_KEYS, writeSetting, writeSettings } from "./settings.js";
 
 /** One line from the user. Resolves with "" when there is none (end of input). */
 function ask(prompt        )                  {
@@ -74,7 +74,9 @@ export async function runSettings(argv          , root = process.env.MESHINGLY_D
       return 2;
     }
     try {
-      writeSetting(root, "ownerDevices", [...current, code].join(","));
+      // The user manages pairing by hand now: nothing is paired by itself afterwards (not even after `settings unpair`).
+      // One write, so a running bridge never sees one without the other.
+      writeSettings(root, { ownerDevices: [...current, code].join(","), autoPairPhone: "false" });
     } catch (err) {
       console.error(err instanceof Error ? err.message : String(err));
       return 2;
@@ -85,7 +87,8 @@ export async function runSettings(argv          , root = process.env.MESHINGLY_D
   if (verb === "unpair") {
     const current = ownerKeys(resolveSettings(root).values.ownerDevices);
     const left = key ? [...current].filter((k) => k !== key) : [];
-    writeSetting(root, "ownerDevices", left.join(","));
+    // Only when something was really taken away, and in one write, the automatic way is switched off for good.
+    writeSettings(root, left.length < current.size ? { ownerDevices: left.join(","), autoPairPhone: "false" } : { ownerDevices: left.join(",") });
     console.log(key ? "That device is no longer paired." : "No device is paired any more.");
     return 0;
   }

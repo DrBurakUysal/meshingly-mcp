@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { CollabError, createCollaboration, formatCode, joinCollaboration } from "./lib/collab.js";
 import { loadOrCreateSession, saveSession,                                                    } from "./lib/config.js";
@@ -328,6 +328,15 @@ export class Meshingly {
   async statusReport()                  {
     const base = this.status();
     const update = await this.takeUpdateNotice();
+    if (existsSync(this.autoPairNotice)) {
+      try {
+        const key = readFileSync(this.autoPairNotice, "utf8").trim();
+        unlinkSync(this.autoPairNotice);
+        update.push(`Your phone (app key ${key.slice(0, 10)}...) joined under your name and was paired automatically: prompts from it now start an AI agent on this computer. Tell the user once. To undo: npx -y meshingly-mcp settings unpair (it will not be paired again by itself; another phone needs settings pair).`);
+      } catch {
+        /* the notice is a courtesy */
+      }
+    }
     if (!this.connected()) return [base, ...update].join("\n\n");
     // The digest is for the start of a session: once per process, not on every status call (it can be long).
     const withDigest = !this.digestShown;
@@ -555,6 +564,8 @@ export class Meshingly {
     for (;;) {
       const page = await messenger.receive(hist.cursor, () => {}, 0, true);
       for (const m of page.messages) if (m.sender) hist.names.set(m.senderSessionId, m.sender);
+      // Only a page that brought a new app hello can pair anything: the other polls skip the settings files entirely.
+      if (page.messages.some((m) => m.payload.type === "hello" && m.sender?.tool === "meshingly-app")) this.autoPair(page.messages, session.sessionId);
       // Everything is kept for the recent-activity digest, but ordinary messages and notes only as a short excerpt: a week
       // of full bodies would otherwise sit in memory. The queue's own messages keep their full text.
       hist.messages.push(
@@ -564,8 +575,45 @@ export class Meshingly {
       hist.cursor = page.nextCursor;
     }
     saveSession(session, this.root); // keys pinned on the way
+    
     this.prune(hist);
     return { messages: hist.messages, self: session.sessionId };
+  }
+
+  /** Where the first automatic pairing leaves its notice, so whichever process the user talks to (not only the one that paired) says it once. */
+          get autoPairNotice()         {
+    return join(this.root, ".meshingly", "autopaired.txt");
+  }
+
+  /**
+   * The user's decision (setting autoPairPhone, on by default): while no phone is paired, the first Meshingly app that
+   * joined under the same name as this session is paired without a typed code. The key comes from the signed hello (keys
+   * are pinned per session, so it cannot be swapped later). Done here in code, never by a model; `settings unpair` undoes it.
+   */
+          autoPair(messages                   , self        )       {
+    try {
+      const settings = resolveSettings(this.root).values;
+      if (!settings.autoPairPhone || settings.ownerDevices !== "") return;
+      // Only a name the user chose: without one the session is named after its role ("backend"), which a teammate could guess.
+      const conn = this.load();
+      const myName = conn && conn.name.trim().toLowerCase() !== conn.role.trim().toLowerCase() ? conn.name.trim().toLowerCase() : "";
+      if (!myName) return;
+      const hello = messages.find(
+        (m) =>
+          m.payload.type === "hello" &&
+          m.senderSessionId !== self &&
+          m.senderKey !== undefined &&
+          m.sender?.tool === "meshingly-app" &&
+          m.sender.role === "app" &&
+          m.sender.name.trim().toLowerCase() === myName,
+      );
+      if (!hello?.senderKey) return;
+      // Once: `settings unpair` must stay undone, so the automatic way switches itself off first, then pairs the first phone.
+      writeSettings(this.root, { autoPairPhone: "false", ownerDevices: hello.senderKey });
+      writeFileSync(this.autoPairNotice, hello.senderKey, { mode: 0o600 });
+    } catch {
+      /* pairing is optional: the manual command still works */
+    }
   }
 
   /** The relay forgets messages after a week, and a long-lived process (the watcher) must not keep more than that, or all traffic forever. */
