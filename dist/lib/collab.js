@@ -85,6 +85,8 @@ async function open(sealed        , wrapKey           , code        )           
                
                    
                  
+                                                                                                                          
+                    
  
 
 /** Errors carry a kind instead of text so the UI can show them in the visitor's language. */
@@ -134,9 +136,10 @@ export async function createCollaboration(baseUrl        , name        )        
     const salt = toB64u(crypto.getRandomValues(new Uint8Array(16)));
     const bundle         = { key: generateMasterKey(), name };
     const { authKey, wrapKey } = await deriveKeys(password, salt, KDF_ITERATIONS);
+    const deleteKey = toB64u(crypto.getRandomValues(new Uint8Array(32)));
     try {
-      await call(`${baseUrl}/v1/collabs`, post({ code, salt, iterations: KDF_ITERATIONS, authKey, bundle: await seal(bundle, wrapKey, code) }));
-      return { code, password, bundle };
+      await call(`${baseUrl}/v1/collabs`, post({ code, salt, iterations: KDF_ITERATIONS, authKey, deleteKey, bundle: await seal(bundle, wrapKey, code) }));
+      return { code, password, bundle, deleteKey };
     } catch (err) {
       if (!(err instanceof CollabError && err.status === 409)) throw err;
     }
@@ -152,4 +155,15 @@ export async function joinCollaboration(baseUrl        , codeInput        , pass
   const { authKey, wrapKey } = await deriveKeys(password, params.salt, params.iterations);
   const joined = await call                    (`${baseUrl}/v1/collabs/${code}/join`, post({ authKey }));
   return open(joined.bundle, wrapKey, code);
+}
+
+/** Removes the collaboration for everyone. Only the creator's delete key is accepted; the optional channel (its id and token, proof that the caller holds it) removes the messages too. */
+export async function deleteCollaboration(baseUrl        , codeInput        , deleteKey        , channel                                           )                {
+  const code = normalizeSecret(codeInput);
+  if (code.length !== 10) throw new CollabError("codeFormat");
+  await call(`${baseUrl}/v1/collabs/${code}`, {
+    method: "DELETE",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ deleteKey, ...(channel ? { channelId: channel.channelId, channelToken: channel.authToken } : {}) }),
+  });
 }

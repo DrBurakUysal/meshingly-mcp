@@ -1,10 +1,12 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { CollabError, createCollaboration, formatCode, joinCollaboration } from "./lib/collab.js";
+import { CollabError, createCollaboration, deleteCollaboration, formatCode, joinCollaboration } from "./lib/collab.js";
+import { deriveChannel } from "./lib/crypto.js";
 import { loadOrCreateSession, saveSession,                                                    } from "./lib/config.js";
 import { defuse, formatAsPrompt } from "./lib/listener.js";
 import { Messenger,                      } from "./lib/messenger.js";
 import { describeWatcher, startWatcher, stopWatcher, takeCurrentRun, watcherState } from "./background.js";
+import { machineDevice } from "./device.js";
 import { joinLink } from "./invite.js";
 import { encodeQr, renderTerminal } from "./qr.js";
 import { at, buildQueue, clean, cleanBlock, cut, LEASE_MS, meantForHere,              } from "./queue.js";
@@ -58,6 +60,8 @@ const DIGEST_QUOTED = 6;
                    
                         
                
+                                                                                                            
+                     
                
                
                
@@ -132,6 +136,13 @@ export class Meshingly {
       );
     }
     const session = loadOrCreateSession(conn.role, this.root);
+    // The computer keeps one name whatever the session id does (a new role or folder state makes a new session id), so a
+    // prompt the app aimed at this computer still finds the session that runs here now.
+    const device = conn.device ?? machineDevice();
+    if (session.device !== device) {
+      session.device = device;
+      saveSession(session, this.root);
+    }
     const config              = { serverUrl: conn.serverUrl, cryptKey: conn.cryptKey, projectName: conn.collaboration, pollIntervalSeconds: 60, longPollSeconds: 0 };
     return { conn, session, messenger: new Messenger(config, session, undefined, () => this.owners()) };
   }
@@ -151,7 +162,7 @@ export class Meshingly {
     const { session, messenger } = this.require();
     session.name = c.name;
     session.tool = c.tool;
-    session.device = c.device ?? `#${session.sessionId.slice(0, 4)}`;
+    session.device = c.device ?? machineDevice();
     this.hist = { messages: [], cursor: 0, names: new Map() };
     this.digestShown = false;
     saveSession(session, this.root);
@@ -331,6 +342,7 @@ export class Meshingly {
       cryptKey: created.bundle.key,
       collaboration: name,
       code: created.code,
+      deleteKey: created.deleteKey,
       ...this.identity(args),
     });
     return [
@@ -345,6 +357,30 @@ export class Meshingly {
       // Whatever the user switched on (the journal rule) applies from the very first session of a new collaboration.
       ...(await this.memoryParts(false).then((p) => p.flatMap((x) => ["", x]))),
     ].join("\n");
+  }
+
+  /** Deletes the collaboration for everyone. Only the session that created it holds the delete key. */
+  async deleteCollab(args                      )                  {
+    const { conn } = this.require();
+    if (!conn.deleteKey) throw new ToolError("Only the session that created this collaboration can delete it. This session joined it; to leave, the user can delete .meshingly/connection.json.");
+    if (args.confirm !== true) throw new ToolError("Deleting removes the collaboration for everyone and cannot be undone. Ask the user, and call again with confirm: true only after they agreed.");
+    try {
+      await deleteCollaboration(conn.serverUrl, conn.code, conn.deleteKey, deriveChannel(conn.cryptKey));
+    } catch (err) {
+      // Already gone (for example removed from the phone): the local connection is stale, so it goes too.
+      if (!(err instanceof CollabError && err.kind === "notFound")) {
+        if (err instanceof CollabError && err.kind === "wrong") throw new ToolError(`The relay refused the delete key${typeof err.data.error === "string" ? ` (${err.data.error})` : ""}.`);
+        await this.wrapErrors(async () => { throw err; });
+      }
+    }
+    // The background watcher is a separate process: left running it would go on polling a channel that is gone.
+    await this.watchStop().catch(() => {});
+    try {
+      unlinkSync(this.file);
+    } catch {
+      /* already gone: the relay delete is what counts */
+    }
+    return `Collaboration "${conn.collaboration}" is deleted for everyone and this session is disconnected. Peers find out when the relay answers that it is gone.`;
   }
 
   /** Status, plus what the user allowed: the journal rule and a digest of what the other sessions did. */
@@ -502,7 +538,10 @@ export class Meshingly {
     this.refuseIfConnected(args.replace);
     const bundle = await this.wrapErrors(() => joinCollaboration(this.serverUrl, args.code, args.password));
     const code = args.code.toUpperCase().replace(/[^A-Z0-9]/g, "");
-    const note = await this.connect({ serverUrl: this.serverUrl, cryptKey: bundle.key, collaboration: bundle.name, code, ...this.identity(args) });
+    // Joining again the collaboration this session created keeps its delete key (the join itself never brings one).
+    const before = this.load();
+    const deleteKey = before?.code === code ? before.deleteKey : undefined;
+    const note = await this.connect({ serverUrl: this.serverUrl, cryptKey: bundle.key, collaboration: bundle.name, code, ...(deleteKey ? { deleteKey } : {}), ...this.identity(args) });
     const peers = await this.require().messenger.peers().catch(() => []);
     return [
       `Joined "${bundle.name}"${note}.`,

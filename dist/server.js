@@ -57,6 +57,16 @@ const TOOLS = [
     },
   },
   {
+    name: "meshingly_delete",
+    description:
+      "Deletes this collaboration for EVERYONE, permanently. Works only in the session that created it. NEVER call this unless the user clearly asked for it in this conversation; ask them first and explain it cannot be undone.",
+    inputSchema: {
+      type: "object",
+      properties: { confirm: { type: "boolean", description: "Must be true, and only after the user agreed." } },
+      required: ["confirm"],
+    },
+  },
+  {
     name: "meshingly_join",
     description: "Joins an EXISTING collaboration with the code and password a teammate shared.",
     inputSchema: {
@@ -226,6 +236,8 @@ async function callTool(name        , args                         )            
     }
     case "meshingly_create":
       return meshingly.create({ name: str("name"), ...id, replace: args.replace === true });
+    case "meshingly_delete":
+      return meshingly.deleteCollab({ confirm: args.confirm === true });
     case "meshingly_join":
       return meshingly.join({ code: str("code"), password: str("password"), ...id, replace: args.replace === true });
     case "meshingly_peers":
