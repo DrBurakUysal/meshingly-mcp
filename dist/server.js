@@ -418,6 +418,8 @@ try {
 // Pushes the paired app's prompts into this session and relays approvals (only does anything once a device is paired).
 const bridge = new ChannelBridge(meshingly, (method, params) => send({ jsonrpc: "2.0", method, params }));
 bridge.start();
+// The session is alive while this process runs: tell the app now and then (the app calls a computer offline after 3 quiet minutes).
+setInterval(() => void meshingly.keepAlive().catch(() => {}), 60_000).unref();
 
 const inFlight = new Set               ();
 const rl = createInterface({ input: process.stdin });

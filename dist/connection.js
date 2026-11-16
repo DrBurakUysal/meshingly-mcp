@@ -888,19 +888,51 @@ export class Meshingly {
   }
 
   /** Reports what this session is doing, for the app. Only when the user turned statusReports on. Never throws. */
-  async reportStatus(args                                                                                                                  )                {
+  async reportStatus(args                                                                                                                                  )                {
     if (!resolveSettings(this.root).values.statusReports || !this.connected()) return;
     try {
       const { messenger } = this.require();
+      const since = args.since ?? new Date().toISOString();
       await messenger.send("status", clean(args.text ?? args.state, 200) || args.state, {
         state: args.state,
-        since: new Date().toISOString(),
+        since,
         ...(args.project ? { project: clean(args.project, 80) } : {}),
         ...(args.agent ? { agent: clean(args.agent, 16) } : {}),
       });
+      // What this session last said, for keepAlive: any process of the project (the server, a hook) may be the one that spoke.
+      if (args.agent !== "watcher") {
+        try {
+          writeFileSync(this.lastStatusFile, JSON.stringify({ state: args.state, text: args.text, project: args.project, since, at: Date.now() }), { mode: 0o600 });
+        } catch {
+          /* a missing file only means the next keep-alive says "idle" */
+        }
+      }
     } catch (err) {
       if (process.env.MESHINGLY_DEBUG) console.error(`meshingly: status not sent: ${err instanceof Error ? err.message : String(err)}`);
     }
+  }
+
+          get lastStatusFile()         {
+    return join(this.root, ".meshingly", "last-status.json");
+  }
+
+  /**
+   * The app calls a computer offline after a few quiet minutes, and an idle session says nothing. While this process
+   * runs, the session is alive: repeat what it last said (same state, same "since") when nothing was sent for a while.
+   * A session that ended is not repeated; when the process dies the repeats stop and the app says offline, rightly.
+   */
+  async keepAlive(everyMs = 75_000)                {
+    if (!this.connected()) return;
+    let last                                                                                   = {};
+    try {
+      last = JSON.parse(readFileSync(this.lastStatusFile, "utf8"))               ;
+    } catch {
+      /* never reported: it is idle */
+    }
+    if (typeof last.at === "number" && Date.now() - last.at < everyMs) return;
+    const state = last.state === "working" || last.state === "waiting" || last.state === "idle" ? last.state : last.state === undefined ? "idle" : undefined;
+    if (!state) return; // ended or offline: not repeated
+    await this.reportStatus({ state, ...(last.text ? { text: last.text } : {}), ...(last.project ? { project: last.project } : {}), ...(last.since ? { since: last.since } : {}) });
   }
 
   /** Handoffs nobody has finished, with this session's id so callers can tell their own from others'. */
